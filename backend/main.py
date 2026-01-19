@@ -32,7 +32,7 @@ pause_tab_monitor = False
 driver_ref = None
 target_tab_handle = None
 
-SKILLS_PATH = os.path.abspath(".agent/skills")
+SKILLS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".agent", "skills"))
 
 
 def tab_monitor():
@@ -741,8 +741,8 @@ def login_to_google(driver, wait):
 
 
 def main():
-    extension_path = os.path.abspath("extension")
-    profile_path = os.path.abspath("chrome_profile")
+    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
+    profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
     
     options = uc.ChromeOptions()
     options.add_argument(f"--load-extension={extension_path}")
