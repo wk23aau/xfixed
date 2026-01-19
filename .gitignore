@@ -1,0 +1,7 @@
+# Ignore patterns
+chrome_profile/
+temp_agents/
+__pycache__/
+*.pyc
+.env
+debug_*.html

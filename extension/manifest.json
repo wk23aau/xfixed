@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Selenium Test Extension",
+  "version": "1.0",
+  "description": "A minimal extension for Selenium testing.",
+  "background": {
+    "service_worker": "background.js"
+  }
+}
