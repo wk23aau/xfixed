@@ -4,6 +4,8 @@ import json
 import shutil
 import threading
 import zipfile
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 from dotenv import load_dotenv
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -797,5 +799,148 @@ def main():
             pass
 
 
+
+# ============================================
+# FLASK API SERVER
+# ============================================
+
+app = Flask(__name__)
+CORS(app)
+
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    return jsonify({
+        "status": "online" if driver_ref else "offline",
+        "driver_initialized": driver_ref is not None
+    })
+
+@app.route('/api/agents', methods=['GET'])
+def api_agents():
+    agents_path = os.path.join(os.path.dirname(__file__), "agents.json")
+    if os.path.exists(agents_path):
+        with open(agents_path, 'r') as f:
+            return jsonify(json.load(f))
+    return jsonify({})
+
+@app.route('/api/roster', methods=['GET'])
+def api_roster():
+    roster = {}
+    if os.path.exists(SKILLS_PATH):
+        for agent_id in os.listdir(SKILLS_PATH):
+            if os.path.isdir(os.path.join(SKILLS_PATH, agent_id)):
+                skill = get_agent_skill(agent_id)
+                if skill:
+                    prefix = agent_id.split('-')[0]
+                    if prefix not in roster:
+                        roster[prefix] = []
+                    roster[prefix].append({
+                        "id": skill['id'],
+                        "name": skill['name'],
+                        "description": skill['description']
+                    })
+    return jsonify(roster)
+
+@app.route('/api/spawn', methods=['POST'])
+def api_spawn():
+    global driver_ref
+    if not driver_ref:
+        return jsonify({"error": "Browser not initialized"}), 503
+    
+    data = request.json
+    agent_id = data.get('agent_id')
+    if not agent_id:
+        return jsonify({"error": "Missing agent_id"}), 400
+    
+    try:
+        # Run spawn in background thread to not block
+        def do_spawn():
+            spawn_agent(driver_ref, agent_id)
+        
+        t = threading.Thread(target=do_spawn, daemon=True)
+        t.start()
+        
+        return jsonify({"status": "spawning", "agent_id": agent_id})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/chat', methods=['POST'])
+def api_chat():
+    global driver_ref
+    if not driver_ref:
+        return jsonify({"error": "Browser not initialized"}), 503
+    
+    data = request.json
+    message = data.get('message')
+    if not message:
+        return jsonify({"error": "Missing message"}), 400
+    
+    try:
+        send_chat_message(driver_ref, message)
+        return jsonify({"status": "sent"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def run_flask():
+    app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
+
+def main_with_api():
+    """Main function that runs browser + Flask API server"""
+    global driver_ref
+    
+    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
+    profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
+    
+    options = uc.ChromeOptions()
+    options.add_argument(f"--load-extension={extension_path}")
+    options.add_argument(f"--user-data-dir={profile_path}")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    
+    print(f"Extension: {extension_path}")
+    print(f"Profile: {profile_path}")
+    
+    driver = uc.Chrome(options=options)
+    driver_ref = driver
+    wait = WebDriverWait(driver, 30)
+    
+    try:
+        print("Waiting for startup...")
+        time.sleep(8)
+        
+        url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
+        print(f"Navigating to: {url}")
+        driver.get(url)
+        time.sleep(5)
+        
+        start_tab_monitor(driver)
+        
+        if "accounts.google.com" in driver.current_url:
+            login_to_google(driver, wait)
+        
+        time.sleep(3)
+        
+        # Start Flask in background thread
+        print("\nStarting API server on http://127.0.0.1:5000")
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        
+        print("\nBrowser + API ready. Press Ctrl+C to exit.")
+        while True:
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        print("Exiting...")
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        stop_all()
+        try:
+            driver.quit()
+        except:
+            pass
+
+
 if __name__ == "__main__":
-    main()
+    main_with_api()
