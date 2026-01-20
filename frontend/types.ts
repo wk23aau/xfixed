@@ -1,8 +1,13 @@
-export interface AgentDefinition {
+
+export interface SystemStatus {
+  status: 'online' | 'offline';
+  driver_initialized: boolean;
+}
+
+export interface Agent {
   id: string;
   name: string;
   description: string;
-  category: string;
 }
 
 export interface ActiveAgent {
@@ -10,19 +15,30 @@ export interface ActiveAgent {
   created_at: string;
 }
 
-export type ActiveAgentMap = Record<string, ActiveAgent>;
+export interface ActiveAgentMap {
+  [id: string]: ActiveAgent;
+}
 
-// Backend returns roster as { "Category Name": [Agent1, Agent2], ... }
-export type RosterResponse = Record<string, AgentDefinition[]>;
-
-export interface SystemStatus {
-  status: 'online' | 'offline';
-  driver_initialized: boolean;
+export interface RosterResponse {
+  [category: string]: Agent[];
 }
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'system' | 'agent';
+  role: 'user' | 'agent' | 'system';
   content: string;
   timestamp: number;
+  agentId?: string; // Which agent sent this or was targeted
+}
+
+export interface UploadedFile {
+  filename: string;
+  size: number;
+  type: string;
+}
+
+export interface ParseResult {
+  filename: string;
+  text: string;
+  length: number;
 }

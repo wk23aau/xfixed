@@ -4,8 +4,6 @@ import json
 import shutil
 import threading
 import zipfile
-from flask import Flask, jsonify, request
-from flask_cors import CORS
 from dotenv import load_dotenv
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -33,9 +31,8 @@ stop_tab_monitor = False
 pause_tab_monitor = False
 driver_ref = None
 target_tab_handle = None
-agent_handles = {}  # {agent_id: window_handle} - track each agent's tab
 
-SKILLS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".agent", "skills"))
+SKILLS_PATH = os.path.abspath(".agent/skills")
 
 
 def tab_monitor():
@@ -516,146 +513,48 @@ def save_agent_url(agent_id, url, filename="agents.json"):
 
 def send_chat_message(driver, message):
     """Type a message in the chatbox and send it"""
-    wait = WebDriverWait(driver, 20)  # Increased timeout
+    wait = WebDriverWait(driver, 15)
     pause_monitor()
     
     try:
-        print(f"[send_chat_message] Starting...")
-        print(f"[send_chat_message] Current URL: {driver.current_url}")
-        print(f"[send_chat_message] Current title: {driver.title}")
-        print(f"[send_chat_message] Message preview: {message[:50]}...")
+        print(f"Sending message...")
         
-        # Step 1: Ensure browser window is focused
-        driver.switch_to.window(driver.current_window_handle)
-        driver.execute_script("window.focus();")
-        time.sleep(0.5)
-        
-        # Step 2: Wait for page to be ready (check for chat container)
-        try:
-            wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "div.input-container, .chat-input, ms-autosize-textarea")
-            ))
-            print("[send_chat_message] Chat container found")
-        except:
-            print("[send_chat_message] WARNING: Chat container not found, proceeding anyway")
-        
-        # Step 3: Find the chatbox with multiple fallback selectors
-        chatbox = None
-        selectors = [
-            "div.input-container textarea",
-            "ms-autosize-textarea textarea",
-            "textarea[placeholder*='message' i]",
-            "textarea[placeholder*='type' i]",
-            ".chat-input textarea",
-            "div.input-area textarea",
-            "textarea:not([readonly])"
-        ]
-        
-        for selector in selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                print(f"[send_chat_message] Selector '{selector}' → {len(elements)} element(s)")
-                for el in elements:
-                    if el.is_displayed() and el.is_enabled():
-                        chatbox = el
-                        print(f"[send_chat_message] ✓ Using: {selector}")
-                        break
-                if chatbox:
-                    break
-            except Exception as e:
-                continue
-        
-        if not chatbox:
-            print("[send_chat_message] ERROR: Chatbox not found!")
-            textareas = driver.find_elements(By.TAG_NAME, "textarea")
-            print(f"[send_chat_message] Found {len(textareas)} textarea(s) on page")
-            for i, ta in enumerate(textareas):
-                try:
-                    print(f"  [{i}] displayed={ta.is_displayed()}, enabled={ta.is_enabled()}, class={ta.get_attribute('class')}")
-                except:
-                    pass
-            return False
-        
-        # Step 4: Scroll into view and ensure visibility
-        driver.execute_script("""
-            arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});
-        """, chatbox)
-        time.sleep(0.3)
-        
-        # Step 5: Focus with multiple methods
-        driver.execute_script("arguments[0].focus();", chatbox)
-        time.sleep(0.2)
-        
+        # Find the chatbox textarea
+        chatbox = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "div.input-container textarea")
+        ))
         try:
             chatbox.click()
         except:
             driver.execute_script("arguments[0].click();", chatbox)
-        time.sleep(0.3)
-        
-        # Step 6: Clear and type message
-        chatbox.clear()
-        time.sleep(0.2)
-        
-        # Use clipboard paste for reliability (handles special characters better)
-        if pyperclip:
-            pyperclip.copy(message)
-            chatbox.send_keys("")  # Ensure focus
-            pyautogui.hotkey('ctrl', 'v')
-            print("[send_chat_message] Pasted message via clipboard")
-        else:
-            chatbox.send_keys(message)
-            print("[send_chat_message] Typed message via send_keys")
-        
-        time.sleep(1)
-        
-        # Step 7: Find and click send button
-        send_btn = None
-        send_selectors = [
-            "button.send-button:not([disabled])",
-            "button.send-button",
-            "button[aria-label*='Send' i]",
-            "button[data-test-id='send-button']",
-            ".send-button:not([disabled])",
-        ]
-        
-        for selector in send_selectors:
-            try:
-                elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                for el in elements:
-                    if el.is_displayed():
-                        disabled = el.get_attribute("disabled")
-                        classes = el.get_attribute("class") or ""
-                        if not disabled and "disabled" not in classes:
-                            send_btn = el
-                            print(f"[send_chat_message] ✓ Send button: {selector}")
-                            break
-                if send_btn:
-                    break
-            except:
-                continue
-        
-        if not send_btn:
-            print("[send_chat_message] Send button not found, trying Enter key")
-            chatbox.send_keys("\n")
-            time.sleep(2)
-            print("[send_chat_message] Sent via Enter key")
-            return True
-        
-        # Wait a moment for button to become clickable
         time.sleep(0.5)
         
-        # Click with JavaScript to bypass any overlays
-        driver.execute_script("arguments[0].click();", send_btn)
-        print("[send_chat_message] ✓ Clicked Send button")
+        # Paste message (faster than typing)
+        if pyperclip:
+            pyperclip.copy(message)
+            pyautogui.hotkey('ctrl', 'v')
+        else:
+            chatbox.send_keys(message)
         
-        time.sleep(2)
-        print("[send_chat_message] ✓ Message sent successfully!")
+        print("Typed message")
+        time.sleep(1)
+        
+        # Click send button (use JS click to bypass overlays)
+        send_btn = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "button.send-button[aria-label='Send']")
+        ))
+        try:
+            send_btn.click()
+        except:
+            driver.execute_script("arguments[0].click();", send_btn)
+        print("Clicked Send")
+        
+        time.sleep(3)
+        print("Message sent!")
         return True
         
     except Exception as e:
-        print(f"[send_chat_message] ERROR: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Send message error: {e}")
         return False
     finally:
         resume_monitor()
@@ -791,63 +690,8 @@ Confirm you understand by editing output.md with STATUS: READY."""
     
     send_chat_message(driver, init_message)
     
-    # Store window handle for this agent
-    agent_handles[agent_id] = driver.current_window_handle
-    print(f"Agent {agent_id} tab handle: {agent_handles[agent_id]}")
-    
     print(f"\nAgent {agent_id} spawned successfully!")
     return True
-
-
-def capture_agent_handles(driver):
-    """Scan all open tabs and capture handles for AGENT: tabs"""
-    global agent_handles
-    
-    try:
-        original_handle = driver.current_window_handle
-    except:
-        original_handle = None
-    
-    handles = driver.window_handles
-    print(f"[capture_agent_handles] Scanning {len(handles)} tabs...")
-    
-    # Clear old handles that are no longer valid
-    agent_handles = {k: v for k, v in agent_handles.items() if v in handles}
-    
-    for handle in handles:
-        try:
-            driver.switch_to.window(handle)
-            time.sleep(0.5)  # Wait for title to load
-            title = driver.title
-            url = driver.current_url
-            
-            print(f"[capture_agent_handles] Tab: {handle[:20]}... | Title: {title[:40]}")
-            
-            # Look for "AGENT: XXX" in title
-            if "AGENT:" in title:
-                parts = title.split("AGENT:")
-                if len(parts) > 1:
-                    agent_id = parts[1].split("|")[0].strip()
-                    if agent_id:
-                        agent_handles[agent_id] = handle
-                        print(f"[capture_agent_handles] ✓ Found {agent_id} → {handle}")
-        except Exception as e:
-            print(f"[capture_agent_handles] Error on handle {handle}: {e}")
-    
-    # Return to original tab
-    if original_handle and original_handle in handles:
-        try:
-            driver.switch_to.window(original_handle)
-        except:
-            pass
-    elif handles:
-        try:
-            driver.switch_to.window(handles[0])
-        except:
-            pass
-    
-    print(f"[capture_agent_handles] Result: {list(agent_handles.keys())}")
-    return agent_handles
 
 
 def login_to_google(driver, wait):
@@ -896,11 +740,9 @@ def login_to_google(driver, wait):
         resume_monitor()
 
 
-
 def main():
-    """Original standalone main - spawns one agent then waits"""
-    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
-    profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
+    extension_path = os.path.abspath("extension")
+    profile_path = os.path.abspath("chrome_profile")
     
     options = uc.ChromeOptions()
     options.add_argument(f"--load-extension={extension_path}")
@@ -932,7 +774,8 @@ def main():
         
         time.sleep(3)
         
-        # Standalone mode: spawn one agent
+        # Spawn a single agent (CTO-001 as example)
+        # You can modify this to spawn multiple agents
         agent_id = "CTO-001"
         spawn_agent(driver, agent_id)
 
@@ -954,220 +797,5 @@ def main():
             pass
 
 
-# ============================================
-# FLASK API SERVER
-# ============================================
-
-app = Flask(__name__)
-CORS(app)
-
-@app.route('/api/status', methods=['GET'])
-def api_status():
-    return jsonify({
-        "status": "online" if driver_ref else "offline",
-        "driver_initialized": driver_ref is not None
-    })
-
-@app.route('/api/agents', methods=['GET'])
-def api_agents():
-    """Return only agents that have active window handles"""
-    global agent_handles
-    
-    active = {}
-    agents_path = os.path.join(os.path.dirname(__file__), "agents.json")
-    
-    if os.path.exists(agents_path):
-        with open(agents_path, "r") as f:
-            all_agents = json.load(f)
-        
-        # Only include agents that have active window handles
-        for agent_id in agent_handles.keys():
-            if agent_id in all_agents:
-                active[agent_id] = all_agents[agent_id]
-    
-    return jsonify(active)
-
-@app.route('/api/roster', methods=['GET'])
-def api_roster():
-    roster = {}
-    if os.path.exists(SKILLS_PATH):
-        for agent_id in os.listdir(SKILLS_PATH):
-            skill = get_agent_skill(agent_id)
-            if skill:
-                category = agent_id.split("-")[0] if "-" in agent_id else "OTHER"
-                if category not in roster:
-                    roster[category] = []
-                roster[category].append({
-                    "id": agent_id,
-                    "name": skill["name"],
-                    "description": skill["description"]
-                })
-    return jsonify(roster)
-
-@app.route('/api/spawn', methods=['POST'])
-def api_spawn():
-    global driver_ref
-    if not driver_ref:
-        return jsonify({"error": "Browser not initialized"}), 503
-    
-    data = request.json
-    agent_id = data.get('agent_id')
-    if not agent_id:
-        return jsonify({"error": "Missing agent_id"}), 400
-    
-    try:
-        def do_spawn():
-            spawn_agent(driver_ref, agent_id)
-        
-        t = threading.Thread(target=do_spawn, daemon=True)
-        t.start()
-        
-        return jsonify({"status": "spawning", "agent_id": agent_id})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/chat', methods=['POST'])
-def api_chat():
-    global driver_ref, agent_handles
-    if not driver_ref:
-        return jsonify({"error": "Browser not initialized"}), 503
-    
-    data = request.json
-    message = data.get('message')
-    agent_id = data.get('agent_id')
-    
-    if not message:
-        return jsonify({"error": "Missing message"}), 400
-    
-    try:
-        # Get current valid handles from browser
-        current_handles = driver_ref.window_handles
-        print(f"[api_chat] ═══════════════════════════════════════")
-        print(f"[api_chat] Browser tabs open: {len(current_handles)}")
-        print(f"[api_chat] Stored agent handles: {list(agent_handles.keys())}")
-        
-        if agent_id:
-            if agent_id not in agent_handles:
-                print(f"[api_chat] Agent {agent_id} not in stored handles, rescanning...")
-                capture_agent_handles(driver_ref)
-            
-            if agent_id not in agent_handles:
-                return jsonify({"error": f"Agent {agent_id} not found in any tab"}), 404
-            
-            handle = agent_handles[agent_id]
-            print(f"[api_chat] Target handle for {agent_id}: {handle}")
-            
-            # Validate handle is still valid
-            if handle not in current_handles:
-                print(f"[api_chat] Handle {handle} is STALE! Rescanning...")
-                capture_agent_handles(driver_ref)
-                
-                if agent_id not in agent_handles:
-                    return jsonify({"error": f"Agent {agent_id} tab was closed"}), 404
-                    
-                handle = agent_handles[agent_id]
-                print(f"[api_chat] New handle after rescan: {handle}")
-            
-            # Switch to the agent's tab
-            print(f"[api_chat] Switching to tab: {handle}")
-            driver_ref.switch_to.window(handle)
-            
-            # Wait for switch and verify
-            time.sleep(1)
-            actual_handle = driver_ref.current_window_handle
-            if actual_handle != handle:
-                print(f"[api_chat] WARNING: Switch may have failed. Current: {actual_handle}")
-            
-            # Additional wait for page to stabilize
-            time.sleep(1.5)
-            
-            print(f"[api_chat] Now on tab: {driver_ref.title}")
-            print(f"[api_chat] URL: {driver_ref.current_url}")
-        else:
-            print(f"[api_chat] No agent specified, using current tab: {driver_ref.title}")
-        
-        # Send the message
-        success = send_chat_message(driver_ref, message)
-        
-        if success:
-            return jsonify({"status": "sent", "agent_id": agent_id or "current"})
-        else:
-            return jsonify({"error": "Failed to send message - check backend logs"}), 500
-            
-    except Exception as e:
-        print(f"[api_chat] EXCEPTION: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-def run_flask():
-    app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
-
-
-def main_with_api():
-    """Main function that runs browser + Flask API server"""
-    global driver_ref
-    
-    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
-    profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
-    
-    options = uc.ChromeOptions()
-    options.add_argument(f"--load-extension={extension_path}")
-    options.add_argument(f"--user-data-dir={profile_path}")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    
-    print(f"Extension: {extension_path}")
-    print(f"Profile: {profile_path}")
-    
-    driver = uc.Chrome(options=options)
-    driver_ref = driver
-    wait = WebDriverWait(driver, 30)
-    
-    try:
-        print("Waiting for startup...")
-        time.sleep(5)
-        
-        # Navigate to AI Studio
-        url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
-        print(f"Navigating to: {url}")
-        driver.get(url)
-        time.sleep(3)
-        
-        start_tab_monitor(driver)
-        
-        # Login if needed
-        if "accounts.google.com" in driver.current_url:
-            login_to_google(driver, wait)
-        
-        # Scan existing tabs for agent handles
-        capture_agent_handles(driver)
-        
-        # Start Flask API in background
-        flask_thread = threading.Thread(target=run_flask, daemon=True)
-        flask_thread.start()
-        print("Starting API server on http://127.0.0.1:5000")
-        
-        print("\nBrowser + API ready. Use frontend to control agents.")
-        print("Press Ctrl+C to exit.")
-        
-        while True:
-            time.sleep(1)
-            
-    except KeyboardInterrupt:
-        print("Exiting...")
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        stop_all()
-        try:
-            driver.quit()
-        except:
-            pass
-
-
 if __name__ == "__main__":
-    main_with_api()
+    main()

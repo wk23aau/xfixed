@@ -1,10 +1,9 @@
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
     "./index.html",
-    // Match root files explicitly to avoid traversing node_modules
     "./*.{js,ts,jsx,tsx}",
-    // Match potential subdirectories if added later
     "./components/**/*.{js,ts,jsx,tsx}",
     "./pages/**/*.{js,ts,jsx,tsx}"
   ],
