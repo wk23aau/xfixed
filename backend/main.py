@@ -1015,54 +1015,80 @@ def send_chat_message(driver, message):
         driver.execute_script("arguments[0].click();", send_btn)
         print("[send_chat_message] ✓ Clicked Send button")
         
-        # P9 Phase 4: Wait for and capture AI response
+        # P9 Phase 4: Wait for AI to finish processing
         time.sleep(2)  # Initial wait for response to start
         
-        # Wait for assistant response to appear (look for response bubbles)
         response_text = None
         try:
-            # Wait up to 60s for response (AI might take time)
+            # Wait up to 60s for AI to finish (check for running/thinking indicators)
             for attempt in range(30):
                 time.sleep(2)
                 
-                # Check if still processing (send button has "running" class or thinking indicator visible)
+                # Check if still processing
                 running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
                 thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
                 
                 if running_btn or thinking:
-                    # Still processing, keep waiting
                     logger.debug("CHAT", f"Still processing (attempt {attempt+1}/30)")
                     continue
                 
-                # Look for the last AI response turn - actual AI Studio selectors
-                response_selectors = [
-                    "div.turn.output ms-console-turn",           # Main response container
-                    "div.turn.output ms-cmark-node",             # Markdown content
-                    "div.turn.output .turn-content",             # Turn content
-                    "div.turn-container div.turn.output",        # Output turn
-                ]
-                
-                for selector in response_selectors:
-                    try:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                        if elements:
-                            last_response = elements[-1]
-                            text = last_response.text.strip()
-                            if text and len(text) > 10:  # Non-empty response
-                                response_text = text
-                                logger.debug("CHAT", f"Response captured ({len(text)} chars)")
-                                break
-                    except:
-                        continue
-                
-                if response_text:
+                # Not processing anymore, try to read output.md
+                if attempt > 2:  # Give it at least 6 seconds
                     break
+            
+            # P9 Phase 5: Read response from output.md via Monaco editor
+            print("[send_chat_message] Looking for output.md in file tree...")
+            
+            # Step 1: Find and click output.md in file tree
+            # The file tree uses: mat-tree-node with span.node-name containing filename
+            output_md_clicked = False
+            try:
+                # Find all file nodes in the tree
+                file_nodes = driver.find_elements(By.CSS_SELECTOR, "mat-tree-node span.node-name")
+                for node in file_nodes:
+                    if node.text.strip().lower() == "output.md":
+                        # Click the parent mat-tree-node to select the file
+                        parent_node = node.find_element(By.XPATH, "./ancestor::mat-tree-node")
+                        driver.execute_script("arguments[0].click();", parent_node)
+                        output_md_clicked = True
+                        print("[send_chat_message] ✓ Clicked output.md in file tree")
+                        break
+                
+                if not output_md_clicked:
+                    print("[send_chat_message] output.md not found in file tree")
+            except Exception as e:
+                print(f"[send_chat_message] Error clicking output.md: {e}")
+            
+            if output_md_clicked:
+                # Step 2: Wait for Monaco editor to load output.md
+                time.sleep(1.5)  # Wait for editor to switch
+                
+                # Verify editor shows output.md (check data-uri attribute)
+                try:
+                    editor = driver.find_element(By.CSS_SELECTOR, "div.monaco-editor[data-uri*='output.md']")
+                    print("[send_chat_message] ✓ Monaco editor loaded output.md")
+                except:
+                    # Editor might just take a moment
+                    time.sleep(1)
+                    print("[send_chat_message] Waiting for editor to load output.md...")
+                
+                # Step 3: Read content from Monaco editor view-lines
+                try:
+                    view_lines = driver.find_elements(By.CSS_SELECTOR, "div.view-lines.monaco-mouse-cursor-text div.view-line")
+                    lines = []
+                    for line in view_lines:
+                        # Each line has span elements with class mtk1, mtk8, etc.
+                        line_text = line.text.strip()
+                        if line_text:
+                            lines.append(line_text)
                     
-                # If no running indicator and no response after a few attempts, stop
-                if attempt > 5 and not running_btn and not thinking:
-                    logger.debug("CHAT", "No loading indicator, stopping wait")
-                    break
-                    
+                    if lines:
+                        response_text = "\n".join(lines)
+                        print(f"[send_chat_message] ✓ Read {len(lines)} lines from output.md")
+                        logger.debug("CHAT", f"Response captured ({len(response_text)} chars)")
+                except Exception as e:
+                    print(f"[send_chat_message] Error reading Monaco editor: {e}")
+                     
         except Exception as e:
             logger.warning("CHAT", f"Response capture failed: {e}")
         
