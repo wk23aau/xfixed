@@ -1077,22 +1077,97 @@ def select_model(driver, model_name="Gemini 3 Pro Preview"):
 
 
 def spawn_agent(driver, agent_id):
-    """Spawn a single agent: create zip, upload, configure, save"""
+    """Spawn a single agent: create zip, upload, configure, save
+    
+    P8 Flow:
+    - Phase 0: Check if agent has URL in DB
+    - Phase R: Reactivate (if URL exists) - fast path
+    - Phase 1-8: Full spawn (if no URL)
+    """
     breakpoint()  # DEBUG: Agent spawn workflow start
-    print(f"\n{'='*50}")
-    print(f"SPAWNING AGENT: {agent_id}")
-    print(f"{'='*50}")
+    global agent_handles
+    
+    logger.info("AGENT", f"Spawn requested: {agent_id}")
+    
+    # ==========================================================================
+    # P8 Phase 0: Check for Reactivation
+    # ==========================================================================
+    existing_agent = db_get_agent(agent_id)
+    
+    if existing_agent and existing_agent.get("drive_url"):
+        # =======================================================================
+        # P8 Phase R: Reactivate (fast path)
+        # =======================================================================
+        logger.info("AGENT", f"Reactivating {agent_id} from saved URL")
+        saved_url = existing_agent["drive_url"]
+        
+        try:
+            # Open new tab
+            driver.execute_script("window.open('');")
+            handles = driver.window_handles
+            new_handle = handles[-1]
+            driver.switch_to.window(new_handle)
+            
+            # Navigate to saved URL
+            logger.debug("AGENT", f"Navigating to saved URL", {"url": saved_url})
+            driver.get(saved_url)
+            
+            # Wait for page to load (use WebDriverWait instead of sleep)
+            wait = WebDriverWait(driver, 10)
+            try:
+                wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            except:
+                logger.warning("AGENT", "Page load timeout during reactivation")
+            
+            # Check if redirected to login
+            if "accounts.google.com" in driver.current_url:
+                logger.warning("AGENT", "Login required during reactivation, falling back to full spawn")
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+                # Fall through to full spawn
+            else:
+                # Verify page loaded correctly (give it a moment for title to update)
+                time.sleep(2)
+                title = driver.title
+                current_url = driver.current_url
+                
+                # Check if we're on AI Studio (not an error page)
+                if "aistudio.google.com" in current_url:
+                    # Store handle in memory
+                    agent_handles[agent_id] = new_handle
+                    
+                    # Update status in DB
+                    db_upsert_agent(agent_id, status="active")
+                    
+                    logger.info("AGENT", f"Reactivated {agent_id} successfully", {
+                        "title": title[:50] if title else "N/A",
+                        "url": current_url[:50]
+                    })
+                    return True
+                else:
+                    logger.warning("AGENT", f"Reactivation landed on unexpected URL", {"url": current_url})
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
+                    # Fall through to full spawn
+            
+        except Exception as e:
+            logger.error("AGENT", f"Reactivation failed, falling back to full spawn", {"error": str(e)})
+    
+    # ==========================================================================
+    # P8 Phase 1: Full Spawn (no saved URL)
+    # ==========================================================================
+    logger.info("AGENT", f"Full spawn starting for {agent_id}")
     
     # Get agent skill info
     skill = get_agent_skill(agent_id)
     if not skill:
-        print(f"Failed to get skill for {agent_id}")
+        logger.error("AGENT", f"Failed to get skill for {agent_id}")
         return False
     
     # Create agent zip
     zip_path = create_agent_zip(agent_id)
     if not zip_path:
-        print(f"Failed to create zip for {agent_id}")
+        logger.error("AGENT", f"Failed to create zip for {agent_id}")
         return False
     
     # Navigate to new app page
