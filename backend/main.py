@@ -1383,8 +1383,20 @@ def main_with_api():
     breakpoint()  # DEBUG: Application startup
     global driver_ref
     
+    # ==========================================================================
+    # P2 Phase 3: Chrome Setup
+    # ==========================================================================
     extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
     profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
+    
+    logger.debug("CHROME", "Extension path resolved", {"path": extension_path})
+    logger.debug("CHROME", "Profile path resolved", {"path": profile_path})
+    
+    # Check if profile exists (determines if we have saved session)
+    if os.path.exists(profile_path):
+        logger.info("PROFILE", "Loading saved session", {"path": profile_path})
+    else:
+        logger.info("PROFILE", "Fresh Chrome instance (no saved profile)", {"path": profile_path})
     
     options = uc.ChromeOptions()
     options.add_argument(f"--load-extension={extension_path}")
@@ -1392,12 +1404,25 @@ def main_with_api():
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
     
-    print(f"Extension: {extension_path}")
-    print(f"Profile: {profile_path}")
+    logger.info("CHROME", "Chrome options configured")
     
-    driver = uc.Chrome(options=options)
+    # ==========================================================================
+    # P2 Phase 4: Chrome Launch
+    # ==========================================================================
+    logger.info("CHROME", "Launching Chrome...")
+    
+    try:
+        driver = uc.Chrome(options=options)
+        logger.info("CHROME", "Chrome launched successfully")
+    except Exception as e:
+        logger.error("CHROME", "Chrome launch failed", {"error": str(e)})
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
     driver_ref = driver
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 5)  # P2: 5 second timeout
+    logger.info("CHROME", "Driver ready", {"timeout": 5})
     
     try:
         print("Waiting for startup...")
