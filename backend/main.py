@@ -1318,12 +1318,16 @@ def spawn_agent(driver, agent_id):
     # Select Gemini 3 Pro Preview model (keep panel open for system instructions)
     select_model(driver, "Gemini 3 Pro Preview", skip_close=True)
     
+    # Set system instructions from SKILL.md (panel already open from select_model)
+    # This closes the panel when done
+    set_system_instructions(driver, skill["skill_content"], skip_open=True)
+    
+    # Now upload files (panel is closed)
     # Upload the agent zip
     if not upload_zip(driver, zip_path):
         print(f"Failed to upload zip for {agent_id}")
         return False
     
-    # Upload xagent.zip (the project these agents work on)
     # Upload core.txt (the project documentation these agents work on)
     core_txt = os.path.abspath("core.txt")
     if os.path.exists(core_txt):
@@ -1331,9 +1335,6 @@ def spawn_agent(driver, agent_id):
         upload_files(driver, ["core.txt"])
     else:
         print(f"core.txt not found, skipping project upload")
-    
-    # Set system instructions from SKILL.md (panel already open from select_model)
-    set_system_instructions(driver, skill["skill_content"], skip_open=True)
     
     # Save app with agent name
     app_name = f"AGENT: {agent_id}"
