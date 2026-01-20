@@ -122,6 +122,112 @@ class Logger:
 logger = Logger()
 
 
+# =============================================================================
+# P5 Phase 10: Agent SQLite Database
+# - Persists agent info across restarts (drive_url, email, files)
+# - Status resets to 'inactive' on every startup
+# - agent_handles (memory) is always {} on startup
+# =============================================================================
+import sqlite3
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "agents.db")
+
+def init_agent_db():
+    """Initialize SQLite database for agent persistence"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Create agents table if not exists
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS agents (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            description TEXT,
+            status TEXT DEFAULT 'inactive',
+            drive_url TEXT,
+            google_email TEXT,
+            files_uploaded TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Reset ALL agent statuses to 'inactive' on startup
+    cursor.execute("UPDATE agents SET status = 'inactive'")
+    
+    conn.commit()
+    conn.close()
+    logger.info("AGENT", "Database initialized", {"path": DB_PATH})
+
+def db_get_agent(agent_id):
+    """Get agent from database"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def db_upsert_agent(agent_id, name=None, description=None, status=None, 
+                    drive_url=None, google_email=None, files_uploaded=None):
+    """Insert or update agent in database"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Check if exists
+    cursor.execute("SELECT id FROM agents WHERE id = ?", (agent_id,))
+    exists = cursor.fetchone() is not None
+    
+    if exists:
+        # Build UPDATE statement dynamically
+        updates = []
+        values = []
+        if name is not None:
+            updates.append("name = ?")
+            values.append(name)
+        if description is not None:
+            updates.append("description = ?")
+            values.append(description)
+        if status is not None:
+            updates.append("status = ?")
+            values.append(status)
+        if drive_url is not None:
+            updates.append("drive_url = ?")
+            values.append(drive_url)
+        if google_email is not None:
+            updates.append("google_email = ?")
+            values.append(google_email)
+        if files_uploaded is not None:
+            updates.append("files_uploaded = ?")
+            values.append(files_uploaded)
+        
+        if updates:
+            values.append(agent_id)
+            cursor.execute(f"UPDATE agents SET {', '.join(updates)} WHERE id = ?", values)
+    else:
+        # INSERT new agent
+        cursor.execute('''
+            INSERT INTO agents (id, name, description, status, drive_url, google_email, files_uploaded)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (agent_id, name, description, status or 'inactive', drive_url, google_email, files_uploaded))
+    
+    conn.commit()
+    conn.close()
+
+def db_get_all_agents():
+    """Get all agents from database"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM agents")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+# Initialize database on module load
+init_agent_db()
+
+
 def tab_monitor():
     """P4 Phase 8: Background tab monitor - closes unwanted popups"""
     breakpoint()  # DEBUG: Tab monitor loop start
@@ -1019,9 +1125,18 @@ def spawn_agent(driver, agent_id):
     app_name = f"AGENT: {agent_id}"
     save_app(driver, app_name)
     
-    # Get and save URL
+    # Get app URL
     app_url = get_app_url(driver)
-    save_agent_url(agent_id, app_url)
+    
+    # P5: Save to SQLite database instead of JSON
+    db_upsert_agent(
+        agent_id=agent_id,
+        name=skill["name"],
+        description=skill["description"],
+        status="active",
+        drive_url=app_url
+    )
+    logger.info("AGENT", "Agent saved to database", {"agent_id": agent_id, "url": app_url})
     
     # Send initialization message
     init_message = f"""First, analyze core.txt to understand the full project context and architecture.
@@ -1049,11 +1164,11 @@ Confirm you understand by editing output.md with STATUS: READY."""
     
     send_chat_message(driver, init_message)
     
-    # Store window handle for this agent
+    # Store window handle in memory (runtime only)
     agent_handles[agent_id] = driver.current_window_handle
-    print(f"Agent {agent_id} tab handle: {agent_handles[agent_id]}")
+    logger.debug("AGENT", "Tab handle stored", {"agent_id": agent_id, "handle": agent_handles[agent_id]})
     
-    print(f"\nAgent {agent_id} spawned successfully!")
+    logger.info("AGENT", "Agent spawned successfully", {"agent_id": agent_id})
     return True
 
 
@@ -1514,7 +1629,10 @@ def main_with_api():
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
         logger.info("FLASK", "API server started on http://127.0.0.1:5000")
-        
+        # ======================================================================
+        # P5 Phase 12: Ready / Keep Alive
+        # ======================================================================
+        logger.info("READY", "Browser + API ready")
         print("\nBrowser + API ready. Use frontend to control agents.")
         print("Press Ctrl+C to exit.")
         
@@ -1522,17 +1640,20 @@ def main_with_api():
             time.sleep(1)
             
     except KeyboardInterrupt:
-        print("Exiting...")
+        logger.info("SHUTDOWN", "User requested exit (Ctrl+C)")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("SHUTDOWN", "Unexpected error", {"error": str(e)})
         import traceback
         traceback.print_exc()
     finally:
+        logger.info("SHUTDOWN", "Cleaning up...")
         stop_all()
         try:
             driver.quit()
+            logger.info("SHUTDOWN", "Chrome closed")
         except:
             pass
+        logger.info("SHUTDOWN", "Goodbye!")
 
 
 if __name__ == "__main__":
