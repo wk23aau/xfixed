@@ -1474,20 +1474,33 @@ def api_status():
 
 @app.route('/api/agents', methods=['GET'])
 def api_agents():
-    """Return only agents that have active window handles"""
+    """Return only agents that have active window handles (from memory + DB info)"""
     global agent_handles
     
     active = {}
-    agents_path = os.path.join(os.path.dirname(__file__), "agents.json")
     
-    if os.path.exists(agents_path):
-        with open(agents_path, "r") as f:
-            all_agents = json.load(f)
-        
-        # Only include agents that have active window handles
-        for agent_id in agent_handles.keys():
-            if agent_id in all_agents:
-                active[agent_id] = all_agents[agent_id]
+    # For each agent with a window handle, get its info from database
+    for agent_id in agent_handles.keys():
+        agent_data = db_get_agent(agent_id)
+        if agent_data:
+            active[agent_id] = {
+                "id": agent_id,
+                "name": agent_data.get("name", agent_id),
+                "description": agent_data.get("description", ""),
+                "url": agent_data.get("drive_url", ""),
+                "status": "active",
+                "created_at": agent_data.get("created_at", "")
+            }
+        else:
+            # Agent in handles but not in DB - use minimal info
+            active[agent_id] = {
+                "id": agent_id,
+                "name": agent_id,
+                "description": "",
+                "url": "",
+                "status": "active",
+                "created_at": ""
+            }
     
     return jsonify(active)
 
@@ -1621,6 +1634,20 @@ def api_chat():
 
 
 def run_flask():
+    # Quiet down Werkzeug logging - hide /api/status spam
+    import logging
+    werkzeug_log = logging.getLogger('werkzeug')
+    
+    class StatusFilter(logging.Filter):
+        def filter(self, record):
+            # Hide /api/status polling requests
+            msg = record.getMessage()
+            if '/api/status' in msg:
+                return False
+            return True
+    
+    werkzeug_log.addFilter(StatusFilter())
+    
     app.run(host='127.0.0.1', port=5000, debug=False, use_reloader=False)
 
 
