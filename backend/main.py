@@ -11,7 +11,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, InvalidSessionIdException
 
 try:
     import pyautogui
@@ -35,6 +35,27 @@ pause_tab_monitor = False
 driver_ref = None
 target_tab_handle = None
 agent_handles = {}  # {agent_id: window_handle} - track each agent's tab
+
+# =============================================================================
+# P12: Browser Initialization Function
+# - Required by ensure_browser() for browser recovery
+# =============================================================================
+def init_driver():
+    """Initialize Chrome WebDriver with undetected-chromedriver"""
+    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
+    profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
+    
+    options = uc.ChromeOptions()
+    options.add_argument(f"--load-extension={extension_path}")
+    options.add_argument(f"--user-data-dir={profile_path}")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    
+    print("[init_driver] Launching Chrome...")
+    driver = uc.Chrome(options=options)
+    print("[init_driver] Chrome launched successfully")
+    
+    return driver
 
 # =============================================================================
 # P12: Browser Health Check and Recovery
@@ -1770,6 +1791,11 @@ def api_deactivate():
                 else:
                     print(f"[api_deactivate] Handle no longer valid (tab already closed?)")
                 
+            except InvalidSessionIdException:
+                # P12 Fix: Browser session is dead - mark driver_ref as stale
+                print(f"[api_deactivate] P12: Browser session dead, marking driver_ref as None")
+                driver_ref = None
+                agent_handles.clear()  # All handles are invalid now
             except Exception as tab_error:
                 print(f"[api_deactivate] Tab close error (non-fatal): {tab_error}")
                 # Continue even if tab close fails
