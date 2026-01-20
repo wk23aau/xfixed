@@ -1773,29 +1773,91 @@ def api_chat():
             
             print(f"[api_chat] Now on tab: {driver_ref.title}")
             print(f"[api_chat] URL: {driver_ref.current_url}")
-        else:
-            print(f"[api_chat] No agent specified, using current tab: {driver_ref.title}")
-        
-        # Send the message and capture response
-        result = send_chat_message(driver_ref, message)
-        
-        # P9: Return response if captured
-        if result:
-            if isinstance(result, str):
-                # Response text was captured
-                return jsonify({
-                    "status": "sent",
-                    "agent_id": agent_id or "current",
-                    "response": result
-                })
+            
+            # Send the message and capture response
+            result = send_chat_message(driver_ref, message)
+            
+            # P9: Return response if captured
+            if result:
+                if isinstance(result, str):
+                    return jsonify({
+                        "status": "sent",
+                        "agent_id": agent_id,
+                        "response": result
+                    })
+                else:
+                    return jsonify({
+                        "status": "sent",
+                        "agent_id": agent_id
+                    })
             else:
-                # Message sent but no response captured
-                return jsonify({
-                    "status": "sent",
-                    "agent_id": agent_id or "current"
-                })
+                return jsonify({"error": "Failed to send message - check backend logs"}), 500
+                
         else:
-            return jsonify({"error": "Failed to send message - check backend logs"}), 500
+            # =====================================================================
+            # P10: BROADCAST MODE - Send to ALL active agents
+            # =====================================================================
+            if not agent_handles:
+                return jsonify({"error": "No active agents to broadcast to"}), 400
+            
+            print(f"[api_chat] ═══════════════════════════════════════")
+            print(f"[api_chat] BROADCAST MODE: Sending to {len(agent_handles)} agents")
+            print(f"[api_chat] Agents: {list(agent_handles.keys())}")
+            
+            results = {}
+            success_count = 0
+            error_count = 0
+            
+            for aid in list(agent_handles.keys()):  # Use list() to avoid dict modification during iteration
+                print(f"[api_chat] ───────────────────────────────────────")
+                print(f"[api_chat] Broadcasting to: {aid}")
+                
+                try:
+                    handle = agent_handles[aid]
+                    
+                    # Validate handle is still valid
+                    if handle not in current_handles:
+                        print(f"[api_chat] Handle for {aid} is stale, skipping")
+                        results[aid] = {"success": False, "error": "Tab was closed"}
+                        error_count += 1
+                        continue
+                    
+                    # Switch to agent's tab
+                    driver_ref.switch_to.window(handle)
+                    time.sleep(1)
+                    
+                    print(f"[api_chat] Switched to: {driver_ref.title}")
+                    
+                    # Send message and capture response
+                    response = send_chat_message(driver_ref, message)
+                    
+                    if response:
+                        if isinstance(response, str):
+                            results[aid] = {"success": True, "response": response}
+                        else:
+                            results[aid] = {"success": True}
+                        success_count += 1
+                        print(f"[api_chat] ✓ {aid}: Message sent")
+                    else:
+                        results[aid] = {"success": False, "error": "Failed to send"}
+                        error_count += 1
+                        print(f"[api_chat] ✗ {aid}: Send failed")
+                        
+                except Exception as e:
+                    print(f"[api_chat] ✗ {aid}: Exception - {e}")
+                    results[aid] = {"success": False, "error": str(e)}
+                    error_count += 1
+            
+            print(f"[api_chat] ═══════════════════════════════════════")
+            print(f"[api_chat] BROADCAST COMPLETE: {success_count} success, {error_count} failed")
+            
+            return jsonify({
+                "broadcast": True,
+                "total": len(agent_handles),
+                "success_count": success_count,
+                "error_count": error_count,
+                "results": results
+            })
             
     except Exception as e:
         print(f"[api_chat] EXCEPTION: {e}")
