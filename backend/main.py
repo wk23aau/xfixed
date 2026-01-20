@@ -1414,33 +1414,39 @@ def spawn_agent(driver, agent_id):
     # P11 Fix 1: Open new tab if there are already active agents
     # P12 Fix: Use robust new tab detection (compare before/after handles)
     # ==========================================================================
+    print(f"[spawn_agent] P12 CHECK: agent_handles = {agent_handles}", flush=True)
+    logger.info("AGENT", f"P12 tab check", {"agent_handles_count": len(agent_handles), "agents": list(agent_handles.keys())})
+    
     if agent_handles:
-        print(f"[spawn_agent] P12: {len(agent_handles)} agents already active, opening new tab")
-        print(f"[spawn_agent] P12: Current handles in memory: {list(agent_handles.keys())}")
+        print(f"[spawn_agent] P12: {len(agent_handles)} agents already active, opening new tab", flush=True)
+        print(f"[spawn_agent] P12: Current handles in memory: {list(agent_handles.keys())}", flush=True)
         
         # Get handles BEFORE opening new tab
         before_tabs = driver.window_handles
-        print(f"[spawn_agent] P12: Browser tabs BEFORE: {len(before_tabs)}")
+        print(f"[spawn_agent] P12: Browser tabs BEFORE: {len(before_tabs)}", flush=True)
         
         driver.execute_script("window.open('');")
         time.sleep(0.5)
         
         # Get handles AFTER opening new tab
         after_tabs = driver.window_handles
-        print(f"[spawn_agent] P12: Browser tabs AFTER: {len(after_tabs)}")
+        print(f"[spawn_agent] P12: Browser tabs AFTER: {len(after_tabs)}", flush=True)
         
         # Find the NEW handle by comparing lists
         if len(after_tabs) > len(before_tabs):
             new_handle = [h for h in after_tabs if h not in before_tabs][0]
-            print(f"[spawn_agent] P12: New tab handle detected: {new_handle[:20]}...")
+            print(f"[spawn_agent] P12: New tab handle detected: {new_handle[:20]}...", flush=True)
             driver.switch_to.window(new_handle)
-            print(f"[spawn_agent] P12: ✓ Switched to new tab")
+            print(f"[spawn_agent] P12: ✓ Switched to new tab", flush=True)
+            logger.info("AGENT", "P12: Switched to new tab", {"handle": new_handle[:20]})
         else:
-            print(f"[spawn_agent] P12: ERROR - New tab was NOT created! Falling back to [-1]")
+            print(f"[spawn_agent] P12: ERROR - New tab was NOT created! Falling back to [-1]", flush=True)
+            logger.error("AGENT", "P12: New tab was NOT created!")
             new_handle = driver.window_handles[-1]
             driver.switch_to.window(new_handle)
     else:
-        print(f"[spawn_agent] P12: First agent, using current tab")
+        print(f"[spawn_agent] P12: First agent, using current tab", flush=True)
+        logger.info("AGENT", "P12: First agent, using current tab")
     
     # Navigate to new app page
     url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
