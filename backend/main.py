@@ -1426,8 +1426,19 @@ def spawn_agent(driver, agent_id):
         before_tabs = driver.window_handles
         print(f"[spawn_agent] P12: Browser tabs BEFORE: {len(before_tabs)}", flush=True)
         
-        driver.execute_script("window.open('');")
+        # Try multiple methods to open new tab
+        # Method 1: window.open with about:blank (some browsers block empty string)
+        driver.execute_script("window.open('about:blank', '_blank');")
         time.sleep(0.5)
+        
+        after_tabs = driver.window_handles
+        if len(after_tabs) <= len(before_tabs):
+            # Method 2: Use ActionChains Ctrl+T (keyboard shortcut)
+            print(f"[spawn_agent] P12: window.open failed, trying Ctrl+T", flush=True)
+            from selenium.webdriver.common.keys import Keys
+            from selenium.webdriver.common.action_chains import ActionChains
+            ActionChains(driver).key_down(Keys.CONTROL).send_keys('t').key_up(Keys.CONTROL).perform()
+            time.sleep(0.5)
         
         # Get handles AFTER opening new tab
         after_tabs = driver.window_handles
