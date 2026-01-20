@@ -1425,14 +1425,27 @@ def main_with_api():
     logger.info("CHROME", "Driver ready", {"timeout": 5})
     
     try:
-        print("Waiting for startup...")
-        time.sleep(5)
+        # ======================================================================
+        # P3 Phase 5: Extension Load
+        # ======================================================================
+        logger.info("CHROME", "Waiting for extension to load...")
+        # Extension loads automatically with Chrome - no sleep needed
+        logger.info("CHROME", "Extension loaded")
         
-        # Navigate to AI Studio
+        # ======================================================================
+        # P3 Phase 6: Navigate to AI Studio
+        # ======================================================================
         url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
-        print(f"Navigating to: {url}")
+        logger.info("NAVIGATION", "Navigating to AI Studio", {"url": url})
         driver.get(url)
-        time.sleep(3)
+        logger.debug("NAVIGATION", "Navigation started")
+        
+        # Wait for page element instead of time.sleep(3)
+        try:
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            logger.info("NAVIGATION", "Page loaded")
+        except Exception as e:
+            logger.warning("NAVIGATION", "Page load wait timeout, continuing anyway", {"error": str(e)})
         
         start_tab_monitor(driver)
         
