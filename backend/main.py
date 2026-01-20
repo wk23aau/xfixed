@@ -1016,17 +1016,25 @@ def send_chat_message(driver, message):
         # Wait for assistant response to appear (look for response bubbles)
         response_text = None
         try:
-            # Wait up to 30s for response (AI might take time)
-            for attempt in range(15):
+            # Wait up to 60s for response (AI might take time)
+            for attempt in range(30):
                 time.sleep(2)
                 
-                # Look for response containers - AI Studio uses various selectors
+                # Check if still processing (send button has "running" class or thinking indicator visible)
+                running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
+                thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
+                
+                if running_btn or thinking:
+                    # Still processing, keep waiting
+                    logger.debug("CHAT", f"Still processing (attempt {attempt+1}/30)")
+                    continue
+                
+                # Look for the last AI response turn - actual AI Studio selectors
                 response_selectors = [
-                    ".response-container:last-child",
-                    ".assistant-message:last-child",
-                    ".message-content.assistant:last-child",
-                    "div[data-turn-role='assistant']:last-child",
-                    ".model-response:last-child",
+                    "div.turn.output ms-console-turn",           # Main response container
+                    "div.turn.output ms-cmark-node",             # Markdown content
+                    "div.turn.output .turn-content",             # Turn content
+                    "div.turn-container div.turn.output",        # Output turn
                 ]
                 
                 for selector in response_selectors:
@@ -1045,10 +1053,9 @@ def send_chat_message(driver, message):
                 if response_text:
                     break
                     
-                # Check if still loading (look for loading indicators)
-                loading = driver.find_elements(By.CSS_SELECTOR, ".loading, .spinner, [aria-busy='true']")
-                if not loading:
-                    # No loading indicator and no response - might be ready
+                # If no running indicator and no response after a few attempts, stop
+                if attempt > 5 and not running_btn and not thinking:
+                    logger.debug("CHAT", "No loading indicator, stopping wait")
                     break
                     
         except Exception as e:
