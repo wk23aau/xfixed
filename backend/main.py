@@ -123,12 +123,13 @@ logger = Logger()
 
 
 def tab_monitor():
+    """P4 Phase 8: Background tab monitor - closes unwanted popups"""
     breakpoint()  # DEBUG: Tab monitor loop start
     global stop_tab_monitor, pause_tab_monitor, driver_ref, target_tab_handle
-    print("Tab monitor started...")
+    logger.info("TAB", "Tab monitor started")
     
     unwanted = ["acrobat", "adobe", "microsoftonline", "microsoft", "welcome"]
-    print(f"[DEBUG] tab_monitor: Unwanted patterns: {unwanted}")
+    logger.debug("TAB", "Unwanted patterns configured", {"patterns": unwanted})
     
     while not stop_tab_monitor:
         if pause_tab_monitor:
@@ -138,43 +139,32 @@ def tab_monitor():
         try:
             if driver_ref and target_tab_handle:
                 handles = driver_ref.window_handles
-                print(f"[DEBUG] tab_monitor: Found {len(handles)} window handles")
-                breakpoint()  # DEBUG: Checking window handles
                 
                 if len(handles) > 1:
                     for handle in handles[:]:
                         if handle == target_tab_handle:
                             continue
                         try:
-                            print(f"[DEBUG] tab_monitor: Switching to handle {handle[:20]}...")
-                            breakpoint()  # DEBUG: Before window switch
                             driver_ref.switch_to.window(handle)
                             url = driver_ref.current_url.lower()
                             title = driver_ref.title.lower()
-                            print(f"[DEBUG] tab_monitor: URL={url[:50]}, Title={title[:30]}")
-                            breakpoint()  # DEBUG: After getting tab info
                             
                             if any(p in url or p in title for p in unwanted):
-                                print(f"[Monitor] Closing: {url[:40]}")
-                                breakpoint()  # DEBUG: Before closing unwanted tab
+                                logger.info("TAB", "Closing unwanted tab", {"url": url[:50]})
                                 driver_ref.close()
-                                print(f"[DEBUG] tab_monitor: Closed unwanted tab")
                         except Exception as e:
-                            print(f"[DEBUG] tab_monitor: Error on handle: {e}")
-                            pass
+                            logger.debug("TAB", "Error checking handle", {"error": str(e)})
                     
                     try:
                         if target_tab_handle in driver_ref.window_handles:
-                            print(f"[DEBUG] tab_monitor: Switching back to target")
                             driver_ref.switch_to.window(target_tab_handle)
                     except:
                         pass
         except Exception as e:
-            print(f"[DEBUG] tab_monitor: Main loop error: {e}")
-            pass
+            logger.debug("TAB", "Monitor loop error", {"error": str(e)})
         time.sleep(0.5)
     
-    print("Tab monitor stopped.")
+    logger.info("TAB", "Tab monitor stopped")
     breakpoint()  # DEBUG: Tab monitor stopped
 
 
@@ -1120,48 +1110,51 @@ def capture_agent_handles(driver):
 
 
 def login_to_google(driver, wait):
+    """P4 Phase 9: Login to Google if needed"""
     breakpoint()  # DEBUG: Google login flow
     email = os.getenv("GOOGLE_EMAIL")
     password = os.getenv("GOOGLE_PASSWORD")
 
     if not email or not password:
-        print("No credentials in .env")
+        logger.warning("LOGIN", "No credentials in .env, manual login required")
         return
 
     pause_monitor()
 
     try:
-        print("Entering email...")
+        logger.info("LOGIN", "Entering email...")
         email_field = wait.until(EC.visibility_of_element_located(
             (By.XPATH, '//input[@type="email"]')
         ))
         email_field.clear()
         email_field.send_keys(email)
         email_field.send_keys("\n")
+        logger.debug("LOGIN", "Email entered")
         
         time.sleep(3)
 
-        print("Entering password...")
+        logger.info("LOGIN", "Entering password...")
         password_field = wait.until(EC.visibility_of_element_located(
             (By.XPATH, '//input[@type="password"]')
         ))
         password_field.clear()
         password_field.send_keys(password)
         password_field.send_keys("\n")
+        logger.debug("LOGIN", "Password entered")
         
-        print("Waiting for login...")
+        logger.info("LOGIN", "Waiting for login to complete...")
         wait.until(lambda d: "accounts.google.com" not in d.current_url)
-        print("Login successful!")
+        logger.info("LOGIN", "Login successful!")
 
     except Exception as e:
-        print(f"Login error: {e}")
-        print("Please login manually...")
+        logger.error("LOGIN", "Auto-login failed, manual login required", {"error": str(e)})
         try:
             WebDriverWait(driver, 120).until(
                 lambda d: "aistudio.google.com" in d.current_url
             )
+            logger.info("LOGIN", "Manual login completed")
         except:
-            pass
+            logger.warning("LOGIN", "Login timeout, continuing anyway")
     finally:
         resume_monitor()
 
@@ -1447,11 +1440,72 @@ def main_with_api():
         except Exception as e:
             logger.warning("NAVIGATION", "Page load wait timeout, continuing anyway", {"error": str(e)})
         
-        start_tab_monitor(driver)
+        # ======================================================================
+        # P4 Phase 7: Dismiss Popups
+        # ======================================================================
+        def dismiss_popups():
+            """Dismiss cookie consent and ToS banners if present"""
+            try:
+                # Cookie consent - look for Disagree/Reject button
+                for selector in [
+                    "//button[contains(text(), 'Disagree')]",
+                    "//button[contains(text(), 'Reject')]",
+                    "//button[contains(@aria-label, 'Disagree')]",
+                ]:
+                    try:
+                        btns = driver.find_elements(By.XPATH, selector)
+                        for btn in btns:
+                            if btn.is_displayed():
+                                btn.click()
+                                logger.info("POPUP", "Cookie consent dismissed")
+                                time.sleep(0.5)
+                                break
+                    except:
+                        pass
+                
+                # ToS banner - look for Dismiss button
+                for selector in [
+                    "//button[contains(text(), 'Dismiss')]",
+                    "//button[contains(text(), 'Got it')]",
+                    "//button[contains(text(), 'OK')]",
+                ]:
+                    try:
+                        btns = driver.find_elements(By.XPATH, selector)
+                        for btn in btns:
+                            if btn.is_displayed():
+                                btn.click()
+                                logger.info("POPUP", "ToS/notice dismissed")
+                                time.sleep(0.5)
+                                break
+                    except:
+                        pass
+            except Exception as e:
+                logger.debug("POPUP", "No popups to dismiss or error", {"error": str(e)})
         
-        # Login if needed
+        dismiss_popups()
+        
+        # ======================================================================
+        # P4 Phase 8: Tab Monitor (First Time Only)
+        # ======================================================================
+        # profile_exists is determined by whether chrome_profile directory existed
+        profile_existed = os.path.exists(profile_path) and len(os.listdir(profile_path)) > 0
+        
+        if not profile_existed:
+            logger.info("TAB", "Starting tab monitor (first-time setup)")
+            start_tab_monitor(driver)
+            logger.debug("TAB", "Tab monitor running")
+        else:
+            logger.info("TAB", "Skipping tab monitor (profile exists)")
+        
+        # ======================================================================
+        # P4 Phase 9: Login Check
+        # ======================================================================
+        logger.info("LOGIN", "Checking authentication status...")
         if "accounts.google.com" in driver.current_url:
+            logger.info("LOGIN", "Login required - redirected to Google")
             login_to_google(driver, wait)
+        else:
+            logger.info("LOGIN", "Already authenticated")
         
         # Scan existing tabs for agent handles
         capture_agent_handles(driver)
@@ -1459,7 +1513,7 @@ def main_with_api():
         # Start Flask API in background
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
-        print("Starting API server on http://127.0.0.1:5000")
+        logger.info("FLASK", "API server started on http://127.0.0.1:5000")
         
         print("\nBrowser + API ready. Use frontend to control agents.")
         print("Press Ctrl+C to exit.")
