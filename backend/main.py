@@ -1632,49 +1632,81 @@ def api_spawn():
 def api_deactivate():
     """Deactivate an agent: close its tab and mark as inactive"""
     global driver_ref, agent_handles
+    
+    print(f"[api_deactivate] ═══════════════════════════════════════")
+    
     if not driver_ref:
+        print("[api_deactivate] ERROR: Browser not initialized")
         return jsonify({"error": "Browser not initialized"}), 503
     
     data = request.json
     agent_id = data.get('agent_id')
     
     if not agent_id:
+        print("[api_deactivate] ERROR: Missing agent_id")
         return jsonify({"error": "Missing agent_id"}), 400
     
+    print(f"[api_deactivate] Deactivating: {agent_id}")
     logger.info("AGENT", f"Deactivating agent: {agent_id}")
+    
+    # Pause tab monitor during deactivation
+    pause_monitor()
     
     try:
         # Find the agent's window handle
         handle = agent_handles.get(agent_id)
+        print(f"[api_deactivate] Handle in memory: {handle}")
+        print(f"[api_deactivate] All handles in memory: {list(agent_handles.keys())}")
         
         if handle:
-            # Check if handle is still valid
-            current_handles = driver_ref.window_handles
-            if handle in current_handles:
-                # Switch to the tab and close it
-                original_handle = driver_ref.current_window_handle
-                driver_ref.switch_to.window(handle)
-                driver_ref.close()
+            try:
+                # Check if handle is still valid
+                current_handles = driver_ref.window_handles
+                print(f"[api_deactivate] Browser handles: {len(current_handles)}")
                 
-                # Switch back to another tab
-                remaining_handles = driver_ref.window_handles
-                if remaining_handles:
-                    driver_ref.switch_to.window(remaining_handles[0])
+                if handle in current_handles:
+                    # Switch to the tab and close it
+                    print(f"[api_deactivate] Switching to tab...")
+                    driver_ref.switch_to.window(handle)
+                    print(f"[api_deactivate] Closing tab...")
+                    driver_ref.close()
+                    
+                    # Switch back to another tab
+                    remaining_handles = driver_ref.window_handles
+                    if remaining_handles:
+                        driver_ref.switch_to.window(remaining_handles[0])
+                        print(f"[api_deactivate] Switched to first remaining tab")
+                    
+                    logger.info("AGENT", f"Closed tab for {agent_id}")
+                    print(f"[api_deactivate] ✓ Tab closed")
+                else:
+                    print(f"[api_deactivate] Handle no longer valid (tab already closed?)")
                 
-                logger.info("AGENT", f"Closed tab for {agent_id}")
+            except Exception as tab_error:
+                print(f"[api_deactivate] Tab close error (non-fatal): {tab_error}")
+                # Continue even if tab close fails
             
             # Remove from memory
             del agent_handles[agent_id]
+            print(f"[api_deactivate] ✓ Removed from memory")
+        else:
+            print(f"[api_deactivate] Agent not in memory (already deactivated?)")
         
-        # Update database status
+        # Update database status (always do this)
         db_upsert_agent(agent_id, status="inactive")
+        print(f"[api_deactivate] ✓ DB updated to 'inactive'")
         logger.info("AGENT", f"Agent marked inactive: {agent_id}")
         
         return jsonify({"status": "deactivated", "agent_id": agent_id})
         
     except Exception as e:
+        import traceback
+        print(f"[api_deactivate] ERROR: {e}")
+        traceback.print_exc()
         logger.error("AGENT", f"Deactivation failed: {e}")
         return jsonify({"error": str(e)}), 500
+    finally:
+        resume_monitor()
 
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
