@@ -648,8 +648,12 @@ def upload_files(driver, files):
         resume_monitor()
 
 
-def set_system_instructions(driver, instructions):
-    """Set system instructions via advanced settings"""
+def set_system_instructions(driver, instructions, skip_open=False):
+    """Set system instructions via advanced settings
+    
+    Args:
+        skip_open: If True, skip opening settings panel (already open from select_model)
+    """
     # breakpoint()  # DEBUG: System instructions workflow start
     print(f"[DEBUG] set_system_instructions: Starting")
     print(f"[DEBUG] set_system_instructions: Instructions length: {len(instructions)} chars")
@@ -660,20 +664,21 @@ def set_system_instructions(driver, instructions):
     try:
         print("Setting system instructions...")
         
-        # Step 1: Click "System instructions" button in advanced settings panel
-        # First we need to open Advanced Settings if not already open
-        print(f"[DEBUG] set_system_instructions: Step 1 - Opening advanced settings")
-    # breakpoint()  # DEBUG: Before opening advanced settings
-        try:
-            adv_settings_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'settings') or contains(@aria-label, 'Settings')]")
-            print(f"[DEBUG] set_system_instructions: Found settings button")
-            adv_settings_btn.click()
-            print("Opened Advanced settings panel")
-            print(f"[DEBUG] set_system_instructions: Clicked settings button")
-            time.sleep(2)
-        except Exception as e:
-            print("Advanced settings panel may already be open or button not found")
-            print(f"[DEBUG] set_system_instructions: Settings button error: {e}")
+        # Step 1: Open Advanced Settings if not already open
+        if not skip_open:
+            print(f"[DEBUG] set_system_instructions: Step 1 - Opening advanced settings")
+            try:
+                adv_settings_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'settings') or contains(@aria-label, 'Settings')]")
+                print(f"[DEBUG] set_system_instructions: Found settings button")
+                adv_settings_btn.click()
+                print("Opened Advanced settings panel")
+                print(f"[DEBUG] set_system_instructions: Clicked settings button")
+                time.sleep(2)
+            except Exception as e:
+                print("Advanced settings panel may already be open or button not found")
+                print(f"[DEBUG] set_system_instructions: Settings button error: {e}")
+        else:
+            print("[DEBUG] set_system_instructions: Skipping open (panel already open)")
         
         # Step 2: Click "System instructions" card button
         print(f"[DEBUG] set_system_instructions: Step 2 - Finding SI button")
@@ -1140,8 +1145,12 @@ def send_chat_message(driver, message):
         resume_monitor()
 
 
-def select_model(driver, model_name="Gemini 3 Pro Preview"):
-    """Select the AI model from Advanced settings dropdown"""
+def select_model(driver, model_name="Gemini 3 Pro Preview", skip_close=False):
+    """Select the AI model from Advanced settings dropdown
+    
+    Args:
+        skip_close: If True, don't close the settings panel (for when set_system_instructions follows)
+    """
     # breakpoint()  # DEBUG: Model selection workflow
     wait = WebDriverWait(driver, 15)
     pause_monitor()
@@ -1174,12 +1183,15 @@ def select_model(driver, model_name="Gemini 3 Pro Preview"):
         print(f"Selected: {model_name}")
         time.sleep(1)
         
-        # Step 4: Close the panel with Escape
-        print("Closing Advanced settings...")
-        pyautogui.press('escape')
-        time.sleep(0.5)
-        pyautogui.press('escape')
-        time.sleep(1)
+        # Step 4: Close the panel with Escape (unless skip_close is True)
+        if not skip_close:
+            print("Closing Advanced settings...")
+            pyautogui.press('escape')
+            time.sleep(0.5)
+            pyautogui.press('escape')
+            time.sleep(1)
+        else:
+            print("Keeping settings panel open for next step...")
         
         return True
         
@@ -1220,29 +1232,27 @@ def spawn_agent(driver, agent_id):
         print(f"[REACTIVATE] Saved URL from DB: {saved_url}")
         
         try:
-            # Get current handles before opening new tab
+            # Get current handles to determine if first agent
             handles_before = driver.window_handles
-            print(f"[REACTIVATE] Handles before: {len(handles_before)}")
+            print(f"[REACTIVATE] Current tabs: {len(handles_before)}")
             
-            # Open new tab
-            driver.execute_script("window.open('');")
-            time.sleep(0.5)  # Brief wait for tab to open
+            # Check if we already have agent tabs (besides the base AI Studio tab)
+            is_first_agent = len(agent_handles) == 0
             
-            handles_after = driver.window_handles
-            print(f"[REACTIVATE] Handles after: {len(handles_after)}")
-            
-            if len(handles_after) > len(handles_before):
-                new_handle = handles_after[-1]
-                print(f"[REACTIVATE] New handle: {new_handle}")
-                driver.switch_to.window(new_handle)
-                print(f"[REACTIVATE] Switched to new tab")
+            if is_first_agent:
+                # First agent - navigate in current tab (no new tab needed)
+                print(f"[REACTIVATE] First agent - using current tab")
+                new_handle = driver.current_window_handle
+                driver.get(saved_url)
             else:
-                print(f"[REACTIVATE] WARNING: No new tab created, using current tab")
-            
-            # Navigate to saved URL
-            print(f"[REACTIVATE] Navigating to: {saved_url}")
-            logger.debug("AGENT", f"Navigating to saved URL", {"url": saved_url})
-            driver.get(saved_url)
+                # Not first agent - open new tab then navigate
+                print(f"[REACTIVATE] Additional agent - opening new tab")
+                driver.execute_script("window.open('');")
+                time.sleep(0.5)
+                handles_after = driver.window_handles
+                new_handle = handles_after[-1]
+                driver.switch_to.window(new_handle)
+                driver.get(saved_url)
             print(f"[REACTIVATE] driver.get() called")
             
             # Wait for page to load (use WebDriverWait instead of sleep)
@@ -1309,8 +1319,8 @@ def spawn_agent(driver, agent_id):
     driver.get(url)
     time.sleep(5)
     
-    # Select Gemini 3 Pro Preview model
-    select_model(driver, "Gemini 3 Pro Preview")
+    # Select Gemini 3 Pro Preview model (keep panel open for system instructions)
+    select_model(driver, "Gemini 3 Pro Preview", skip_close=True)
     
     # Upload the agent zip
     if not upload_zip(driver, zip_path):
@@ -1326,8 +1336,8 @@ def spawn_agent(driver, agent_id):
     else:
         print(f"core.txt not found, skipping project upload")
     
-    # Set system instructions from SKILL.md
-    set_system_instructions(driver, skill["skill_content"])
+    # Set system instructions from SKILL.md (panel already open from select_model)
+    set_system_instructions(driver, skill["skill_content"], skip_open=True)
     
     # Save app with agent name
     app_name = f"AGENT: {agent_id}"
