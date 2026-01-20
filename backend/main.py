@@ -1628,6 +1628,54 @@ def api_spawn():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/deactivate', methods=['POST'])
+def api_deactivate():
+    """Deactivate an agent: close its tab and mark as inactive"""
+    global driver_ref, agent_handles
+    if not driver_ref:
+        return jsonify({"error": "Browser not initialized"}), 503
+    
+    data = request.json
+    agent_id = data.get('agent_id')
+    
+    if not agent_id:
+        return jsonify({"error": "Missing agent_id"}), 400
+    
+    logger.info("AGENT", f"Deactivating agent: {agent_id}")
+    
+    try:
+        # Find the agent's window handle
+        handle = agent_handles.get(agent_id)
+        
+        if handle:
+            # Check if handle is still valid
+            current_handles = driver_ref.window_handles
+            if handle in current_handles:
+                # Switch to the tab and close it
+                original_handle = driver_ref.current_window_handle
+                driver_ref.switch_to.window(handle)
+                driver_ref.close()
+                
+                # Switch back to another tab
+                remaining_handles = driver_ref.window_handles
+                if remaining_handles:
+                    driver_ref.switch_to.window(remaining_handles[0])
+                
+                logger.info("AGENT", f"Closed tab for {agent_id}")
+            
+            # Remove from memory
+            del agent_handles[agent_id]
+        
+        # Update database status
+        db_upsert_agent(agent_id, status="inactive")
+        logger.info("AGENT", f"Agent marked inactive: {agent_id}")
+        
+        return jsonify({"status": "deactivated", "agent_id": agent_id})
+        
+    except Exception as e:
+        logger.error("AGENT", f"Deactivation failed: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
     # breakpoint()  # DEBUG: API chat endpoint hit
