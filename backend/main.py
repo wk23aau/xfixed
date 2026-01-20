@@ -35,6 +35,7 @@ pause_tab_monitor = False
 driver_ref = None
 target_tab_handle = None
 agent_handles = {}  # {agent_id: window_handle} - track each agent's tab
+spawn_lock = threading.Lock()  # P8: Prevent parallel spawns (race condition with agent_handles)
 
 # =============================================================================
 # P12: Browser Initialization Function
@@ -1769,7 +1770,12 @@ def api_spawn():
     
     try:
         def do_spawn():
-            spawn_agent(driver_ref, agent_id)
+            # P8: Acquire lock to prevent parallel spawns
+            # This ensures agent_handles is properly populated before next spawn checks it
+            with spawn_lock:
+                print(f"[api_spawn] P8: Lock acquired for {agent_id}", flush=True)
+                spawn_agent(driver_ref, agent_id)
+                print(f"[api_spawn] P8: Lock released for {agent_id}", flush=True)
         
         t = threading.Thread(target=do_spawn, daemon=True)
         t.start()
