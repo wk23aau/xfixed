@@ -1093,13 +1093,23 @@ def send_chat_message(driver, message):
                 
                 # Step 3: Read content from Monaco editor view-lines
                 try:
+                    # Debug: Try multiple selectors
                     view_lines = driver.find_elements(By.CSS_SELECTOR, "div.view-lines.monaco-mouse-cursor-text div.view-line")
+                    print(f"[send_chat_message] DEBUG: Found {len(view_lines)} view-line elements")
+                    
+                    if not view_lines:
+                        # Fallback: try without the mouse-cursor-text class
+                        view_lines = driver.find_elements(By.CSS_SELECTOR, "div.view-lines div.view-line")
+                        print(f"[send_chat_message] DEBUG: Fallback found {len(view_lines)} view-line elements")
+                    
                     lines = []
                     for line in view_lines:
                         # Each line has span elements with class mtk1, mtk8, etc.
                         line_text = line.text.strip()
                         if line_text:
                             lines.append(line_text)
+                    
+                    print(f"[send_chat_message] DEBUG: Extracted {len(lines)} non-empty lines")
                     
                     if lines:
                         response_text = "\n".join(lines)
@@ -1109,10 +1119,16 @@ def send_chat_message(driver, message):
                         # P9: After first response, save URL and mark agent active
                         # Find which agent this tab belongs to
                         current_handle = driver.current_window_handle
+                        print(f"[send_chat_message] DEBUG: Looking for handle {current_handle[:20]}... in agent_handles")
+                        print(f"[send_chat_message] DEBUG: agent_handles = {list(agent_handles.keys())}")
+                        
                         for aid, handle in agent_handles.items():
                             if handle == current_handle:
+                                print(f"[send_chat_message] DEBUG: Found matching agent: {aid}")
                                 # Check if agent is still in "spawning" status
                                 agent_data = db_get_agent(aid)
+                                print(f"[send_chat_message] DEBUG: agent_data status = {agent_data.get('status') if agent_data else 'None'}")
+                                
                                 if agent_data and agent_data.get("status") == "spawning":
                                     # First response received! Save URL and mark active
                                     current_url = driver.current_url
@@ -1308,6 +1324,21 @@ def spawn_agent(driver, agent_id):
     if not zip_path:
         logger.error("AGENT", f"Failed to create zip for {agent_id}")
         return False
+    
+    # ==========================================================================
+    # P11 Fix 1: Open new tab if there are already active agents
+    # This prevents overwriting an existing agent's tab
+    # ==========================================================================
+    if agent_handles:
+        print(f"[spawn_agent] P11: {len(agent_handles)} agents already active, opening new tab")
+        driver.execute_script("window.open('');")
+        time.sleep(0.5)
+        # Switch to the new tab (last one)
+        new_handle = driver.window_handles[-1]
+        driver.switch_to.window(new_handle)
+        print(f"[spawn_agent] P11: Switched to new tab")
+    else:
+        print(f"[spawn_agent] P11: First agent, using current tab")
     
     # Navigate to new app page
     url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
