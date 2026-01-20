@@ -38,11 +38,97 @@ agent_handles = {}  # {agent_id: window_handle} - track each agent's tab
 SKILLS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".agent", "skills"))
 
 
+# =============================================================================
+# P1 Phase 2: Dual Logging System
+# - File (logs/xapply.log): DEBUG level, JSON format, everything
+# - Terminal: INFO level, important flow steps only
+# =============================================================================
+import sys
+import platform
+from datetime import datetime
+
+class Logger:
+    """Dual-output logger: JSON file (DEBUG) + Terminal (INFO)"""
+    
+    LEVELS = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+    
+    def __init__(self, log_dir="logs", log_file="xapply.log"):
+        self.log_dir = os.path.join(os.path.dirname(__file__), log_dir)
+        self.log_path = os.path.join(self.log_dir, log_file)
+        self._ensure_log_dir()
+        self._log_startup()
+    
+    def _ensure_log_dir(self):
+        """Create logs/ directory if it doesn't exist"""
+        os.makedirs(self.log_dir, exist_ok=True)
+    
+    def _write_file(self, entry: dict):
+        """Append JSON entry to log file"""
+        try:
+            with open(self.log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception as e:
+            print(f"[Logger] File write error: {e}")
+    
+    def _log_startup(self):
+        """Log startup info with system details"""
+        self.log("INFO", "STARTUP", "Backend starting", {
+            "python": platform.python_version(),
+            "os": platform.system(),
+            "cwd": os.getcwd()
+        })
+    
+    def log(self, level: str, category: str, message: str, data: dict = None):
+        """
+        Log a message with dual output.
+        
+        Args:
+            level: DEBUG, INFO, WARNING, ERROR
+            category: STARTUP, CHROME, NAVIGATION, AGENT, etc.
+            message: Human-readable message
+            data: Optional dict with extra info
+        """
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry = {
+            "timestamp": timestamp,
+            "level": level,
+            "category": category,
+            "message": message
+        }
+        if data:
+            entry["data"] = data
+        
+        # Always write to file (DEBUG level = everything)
+        self._write_file(entry)
+        
+        # Only print INFO+ to terminal
+        if self.LEVELS.get(level, 0) >= self.LEVELS["INFO"]:
+            print(f"[{category}] {message}")
+    
+    def debug(self, category: str, message: str, data: dict = None):
+        self.log("DEBUG", category, message, data)
+    
+    def info(self, category: str, message: str, data: dict = None):
+        self.log("INFO", category, message, data)
+    
+    def warning(self, category: str, message: str, data: dict = None):
+        self.log("WARNING", category, message, data)
+    
+    def error(self, category: str, message: str, data: dict = None):
+        self.log("ERROR", category, message, data)
+
+
+# Initialize global logger
+logger = Logger()
+
+
 def tab_monitor():
+    breakpoint()  # DEBUG: Tab monitor loop start
     global stop_tab_monitor, pause_tab_monitor, driver_ref, target_tab_handle
     print("Tab monitor started...")
     
     unwanted = ["acrobat", "adobe", "microsoftonline", "microsoft", "welcome"]
+    print(f"[DEBUG] tab_monitor: Unwanted patterns: {unwanted}")
     
     while not stop_tab_monitor:
         if pause_tab_monitor:
@@ -52,35 +138,48 @@ def tab_monitor():
         try:
             if driver_ref and target_tab_handle:
                 handles = driver_ref.window_handles
+                print(f"[DEBUG] tab_monitor: Found {len(handles)} window handles")
+                breakpoint()  # DEBUG: Checking window handles
                 
                 if len(handles) > 1:
                     for handle in handles[:]:
                         if handle == target_tab_handle:
                             continue
                         try:
+                            print(f"[DEBUG] tab_monitor: Switching to handle {handle[:20]}...")
+                            breakpoint()  # DEBUG: Before window switch
                             driver_ref.switch_to.window(handle)
                             url = driver_ref.current_url.lower()
                             title = driver_ref.title.lower()
+                            print(f"[DEBUG] tab_monitor: URL={url[:50]}, Title={title[:30]}")
+                            breakpoint()  # DEBUG: After getting tab info
                             
                             if any(p in url or p in title for p in unwanted):
                                 print(f"[Monitor] Closing: {url[:40]}")
+                                breakpoint()  # DEBUG: Before closing unwanted tab
                                 driver_ref.close()
-                        except:
+                                print(f"[DEBUG] tab_monitor: Closed unwanted tab")
+                        except Exception as e:
+                            print(f"[DEBUG] tab_monitor: Error on handle: {e}")
                             pass
                     
                     try:
                         if target_tab_handle in driver_ref.window_handles:
+                            print(f"[DEBUG] tab_monitor: Switching back to target")
                             driver_ref.switch_to.window(target_tab_handle)
                     except:
                         pass
-        except:
+        except Exception as e:
+            print(f"[DEBUG] tab_monitor: Main loop error: {e}")
             pass
         time.sleep(0.5)
     
     print("Tab monitor stopped.")
+    breakpoint()  # DEBUG: Tab monitor stopped
 
 
 def start_tab_monitor(driver, handle=None):
+    breakpoint()  # DEBUG: Starting tab monitor
     global driver_ref, stop_tab_monitor, target_tab_handle, pause_tab_monitor
     driver_ref = driver
     target_tab_handle = handle or driver.current_window_handle
@@ -108,101 +207,162 @@ def stop_all():
 
 def handle_native_file_dialog(file_path):
     """Handle Windows native file dialog using Alt+N to focus filename field"""
+    breakpoint()  # DEBUG: Native file dialog handler
+    print(f"[DEBUG] handle_native_file_dialog: Starting for {file_path}")
     if not pyautogui:
         print("PyAutoGUI required")
         return False
     
     try:
         print(f"Handling dialog for: {file_path}")
+        print(f"[DEBUG] handle_native_file_dialog: Waiting 2s for dialog")
+        breakpoint()  # DEBUG: Before dialog wait
         time.sleep(2)
         
+        print(f"[DEBUG] handle_native_file_dialog: Checking file exists")
         if not os.path.exists(file_path):
             print(f"File not found: {file_path}")
+            breakpoint()  # DEBUG: File not found
             return False
         
         win_path = os.path.abspath(file_path).replace('/', '\\')
         print(f"Full path: {win_path}")
+        print(f"[DEBUG] handle_native_file_dialog: Converted path to Windows format")
+        breakpoint()  # DEBUG: Path converted
         
         # Focus filename field (Alt+N is Windows standard)
         print("Focusing filename field (Alt+N)...")
+        print(f"[DEBUG] handle_native_file_dialog: Sending Alt+N hotkey")
+        breakpoint()  # DEBUG: Before Alt+N
         pyautogui.hotkey('alt', 'n')
         time.sleep(0.5)
+        print(f"[DEBUG] handle_native_file_dialog: Alt+N sent")
         
         # Select all existing text
+        print(f"[DEBUG] handle_native_file_dialog: Sending Ctrl+A")
+        breakpoint()  # DEBUG: Before Ctrl+A
         pyautogui.hotkey('ctrl', 'a')
         time.sleep(0.2)
+        print(f"[DEBUG] handle_native_file_dialog: Ctrl+A sent")
         
         # Paste path
+        print(f"[DEBUG] handle_native_file_dialog: Pasting/typing path")
+        breakpoint()  # DEBUG: Before paste
         if pyperclip:
             pyperclip.copy(win_path)
             pyautogui.hotkey('ctrl', 'v')
             print("Pasted path")
+            print(f"[DEBUG] handle_native_file_dialog: Clipboard paste complete")
         else:
             pyautogui.typewrite(win_path, interval=0.03)
             print("Typed path")
+            print(f"[DEBUG] handle_native_file_dialog: Typewrite complete")
         
         time.sleep(0.5)
         
         # Submit
         print("Pressing Enter...")
+        print(f"[DEBUG] handle_native_file_dialog: Sending Enter key")
+        breakpoint()  # DEBUG: Before Enter
         pyautogui.press('enter')
         
+        print(f"[DEBUG] handle_native_file_dialog: Waiting 3s for dialog close")
         time.sleep(3)
         print("Dialog handled successfully")
+        breakpoint()  # DEBUG: Dialog complete
         return True
         
     except Exception as e:
         print(f"Dialog error: {e}")
+        print(f"[DEBUG] handle_native_file_dialog: EXCEPTION: {e}")
+        breakpoint()  # DEBUG: Dialog error
         return False
 
 
 def get_agent_skill(agent_id):
     """Read agent SKILL.md and extract info"""
+    breakpoint()  # DEBUG: Loading agent skill
+    print(f"[DEBUG] get_agent_skill: Loading skill for {agent_id}")
     skill_path = os.path.join(SKILLS_PATH, agent_id, "SKILL.md")
+    print(f"[DEBUG] get_agent_skill: Skill path: {skill_path}")
+    breakpoint()  # DEBUG: Skill path resolved
+    
     if not os.path.exists(skill_path):
         print(f"Skill not found: {skill_path}")
+        print(f"[DEBUG] get_agent_skill: File does not exist")
+        breakpoint()  # DEBUG: Skill not found
         return None
     
+    print(f"[DEBUG] get_agent_skill: Reading file...")
+    breakpoint()  # DEBUG: Before file read
     with open(skill_path, "r", encoding="utf-8") as f:
         content = f.read()
+    print(f"[DEBUG] get_agent_skill: File read, {len(content)} bytes")
+    breakpoint()  # DEBUG: After file read
     
     # Parse YAML frontmatter
     name = agent_id
     description = ""
+    print(f"[DEBUG] get_agent_skill: Parsing YAML frontmatter")
     if content.startswith("---"):
+        print(f"[DEBUG] get_agent_skill: Found frontmatter delimiter")
+        breakpoint()  # DEBUG: Parsing frontmatter
         parts = content.split("---", 2)
+        print(f"[DEBUG] get_agent_skill: Split into {len(parts)} parts")
         if len(parts) >= 3:
             frontmatter = parts[1]
+            print(f"[DEBUG] get_agent_skill: Frontmatter: {frontmatter[:100]}...")
             for line in frontmatter.split("\n"):
                 if line.startswith("name:"):
                     name = line.split(":", 1)[1].strip().strip('"\'')
+                    print(f"[DEBUG] get_agent_skill: Found name: {name}")
                 elif line.startswith("description:"):
                     description = line.split(":", 1)[1].strip().strip('"\'')
+                    print(f"[DEBUG] get_agent_skill: Found description: {description[:50]}...")
     
-    return {
+    result = {
         "id": agent_id,
         "name": name,
         "description": description,
         "skill_content": content,
         "skill_path": skill_path
     }
+    print(f"[DEBUG] get_agent_skill: Returning skill object")
+    breakpoint()  # DEBUG: Skill loaded successfully
+    return result
 
 
 def create_agent_zip(agent_id, output_dir="temp_agents"):
     """Create .agent.zip for a specific agent"""
+    breakpoint()  # DEBUG: Creating agent zip package
+    print(f"[DEBUG] create_agent_zip: Starting for {agent_id}")
+    print(f"[DEBUG] create_agent_zip: Output dir: {output_dir}")
+    
+    print(f"[DEBUG] create_agent_zip: Getting agent skill")
+    breakpoint()  # DEBUG: Before get_agent_skill call
     skill = get_agent_skill(agent_id)
     if not skill:
+        print(f"[DEBUG] create_agent_zip: No skill found, returning None")
+        breakpoint()  # DEBUG: Skill not found
         return None
+    print(f"[DEBUG] create_agent_zip: Skill loaded: {skill['name']}")
+    breakpoint()  # DEBUG: After get_agent_skill call
     
     # Create temp directory
+    print(f"[DEBUG] create_agent_zip: Creating directories")
+    breakpoint()  # DEBUG: Before directory creation
     os.makedirs(output_dir, exist_ok=True)
     agent_dir = os.path.join(output_dir, agent_id)
     os.makedirs(agent_dir, exist_ok=True)
+    print(f"[DEBUG] create_agent_zip: Agent dir: {agent_dir}")
     
     # Create core_instructions.md from SKILL.md
     core_path = os.path.join(agent_dir, "core_instructions.md")
+    print(f"[DEBUG] create_agent_zip: Writing core_instructions.md")
+    breakpoint()  # DEBUG: Before writing core_instructions
     with open(core_path, "w", encoding="utf-8") as f:
         f.write(skill["skill_content"])
+    print(f"[DEBUG] create_agent_zip: Wrote {len(skill['skill_content'])} bytes")
     
     # Create other files
     files = {
@@ -211,31 +371,48 @@ def create_agent_zip(agent_id, output_dir="temp_agents"):
         "memory.json": "{}"
     }
     
+    print(f"[DEBUG] create_agent_zip: Writing {len(files)} additional files")
+    breakpoint()  # DEBUG: Before writing other files
     for fname, content in files.items():
         fpath = os.path.join(agent_dir, fname)
+        print(f"[DEBUG] create_agent_zip: Writing {fname}")
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(content)
+    print(f"[DEBUG] create_agent_zip: All files written")
     
     # Create zip
     zip_path = os.path.join(output_dir, f"{agent_id}.agent.zip")
+    print(f"[DEBUG] create_agent_zip: Creating zip at {zip_path}")
+    breakpoint()  # DEBUG: Before zip creation
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for fname in ["core_instructions.md", "input.md", "output.md", "memory.json"]:
-            zf.write(os.path.join(agent_dir, fname), fname)
+            full_path = os.path.join(agent_dir, fname)
+            print(f"[DEBUG] create_agent_zip: Adding {fname} to zip")
+            zf.write(full_path, fname)
     
     print(f"Created: {zip_path}")
+    print(f"[DEBUG] create_agent_zip: Zip created successfully")
+    breakpoint()  # DEBUG: Zip creation complete
     return zip_path
 
 
 def upload_zip(driver, zip_path):
     """Upload a zip file via app UI"""
+    breakpoint()  # DEBUG: Zip upload workflow start
+    print(f"[DEBUG] upload_zip: Starting upload for {zip_path}")
     wait = WebDriverWait(driver, 15)
+    print(f"[DEBUG] upload_zip: Pausing tab monitor")
     pause_monitor()
     
     try:
         print(f"Uploading zip: {zip_path}")
+        print(f"[DEBUG] upload_zip: Waiting 2s for page stability")
+        breakpoint()  # DEBUG: Before initial wait
         time.sleep(2)
         
         # Find Add button
+        print(f"[DEBUG] upload_zip: Searching for Add button")
+        breakpoint()  # DEBUG: Before button search
         add_btn = None
         for xpath in [
             "//button[contains(@aria-label, 'Add')]",
@@ -243,43 +420,67 @@ def upload_zip(driver, zip_path):
             "//button[.//span[text()='add']]",
         ]:
             try:
+                print(f"[DEBUG] upload_zip: Trying xpath: {xpath}")
                 els = driver.find_elements(By.XPATH, xpath)
+                print(f"[DEBUG] upload_zip: Found {len(els)} elements")
                 for el in els:
                     if el.is_displayed():
                         add_btn = el
+                        print(f"[DEBUG] upload_zip: Found displayed Add button")
                         break
                 if add_btn:
                     break
-            except:
+            except Exception as e:
+                print(f"[DEBUG] upload_zip: Xpath error: {e}")
                 pass
         
         if not add_btn:
             print("Add button not found")
+            print(f"[DEBUG] upload_zip: FAILED - Add button not found")
+            breakpoint()  # DEBUG: Add button not found
             return False
         
+        print(f"[DEBUG] upload_zip: Clicking Add button")
+        breakpoint()  # DEBUG: Before clicking Add
         add_btn.click()
         print("Clicked Add")
+        print(f"[DEBUG] upload_zip: Add button clicked")
         time.sleep(1)
         
         # Click Upload Zip
+        print(f"[DEBUG] upload_zip: Waiting for Upload Zip menu item")
+        breakpoint()  # DEBUG: Before finding Upload Zip
         zip_item = wait.until(EC.element_to_be_clickable(
             (By.XPATH, "//*[contains(text(), 'Upload Zip')]")
         ))
+        print(f"[DEBUG] upload_zip: Found Upload Zip item")
+        breakpoint()  # DEBUG: Before clicking Upload Zip
         zip_item.click()
         print("Clicked Upload Zip")
+        print(f"[DEBUG] upload_zip: Upload Zip clicked")
         
+        print(f"[DEBUG] upload_zip: Waiting 2s for file dialog")
         time.sleep(2)
-        return handle_native_file_dialog(zip_path)
+        print(f"[DEBUG] upload_zip: Calling handle_native_file_dialog")
+        breakpoint()  # DEBUG: Before file dialog
+        result = handle_native_file_dialog(zip_path)
+        print(f"[DEBUG] upload_zip: File dialog result: {result}")
+        breakpoint()  # DEBUG: After file dialog
+        return result
         
     except Exception as e:
         print(f"Upload error: {e}")
+        print(f"[DEBUG] upload_zip: EXCEPTION: {e}")
+        breakpoint()  # DEBUG: Upload error
         return False
     finally:
+        print(f"[DEBUG] upload_zip: Resuming tab monitor")
         resume_monitor()
 
 
 def upload_files(driver, files):
     """Upload individual files via 'Upload files' menu option"""
+    breakpoint()  # DEBUG: File upload workflow
     wait = WebDriverWait(driver, 15)
     pause_monitor()
     
@@ -353,7 +554,11 @@ def upload_files(driver, files):
 
 def set_system_instructions(driver, instructions):
     """Set system instructions via advanced settings"""
+    breakpoint()  # DEBUG: System instructions workflow start
+    print(f"[DEBUG] set_system_instructions: Starting")
+    print(f"[DEBUG] set_system_instructions: Instructions length: {len(instructions)} chars")
     wait = WebDriverWait(driver, 15)
+    print(f"[DEBUG] set_system_instructions: Pausing tab monitor")
     pause_monitor()
     
     try:
@@ -361,63 +566,100 @@ def set_system_instructions(driver, instructions):
         
         # Step 1: Click "System instructions" button in advanced settings panel
         # First we need to open Advanced Settings if not already open
+        print(f"[DEBUG] set_system_instructions: Step 1 - Opening advanced settings")
+        breakpoint()  # DEBUG: Before opening advanced settings
         try:
             adv_settings_btn = driver.find_element(By.XPATH, "//button[contains(@aria-label, 'settings') or contains(@aria-label, 'Settings')]")
+            print(f"[DEBUG] set_system_instructions: Found settings button")
             adv_settings_btn.click()
             print("Opened Advanced settings panel")
+            print(f"[DEBUG] set_system_instructions: Clicked settings button")
             time.sleep(2)
-        except:
+        except Exception as e:
             print("Advanced settings panel may already be open or button not found")
+            print(f"[DEBUG] set_system_instructions: Settings button error: {e}")
         
         # Step 2: Click "System instructions" card button
+        print(f"[DEBUG] set_system_instructions: Step 2 - Finding SI button")
+        breakpoint()  # DEBUG: Before finding SI button
         si_button = wait.until(EC.element_to_be_clickable(
             (By.CSS_SELECTOR, "button[data-test-id='instructions-button']")
         ))
+        print(f"[DEBUG] set_system_instructions: Found SI button")
+        breakpoint()  # DEBUG: Before clicking SI button
         si_button.click()
         print("Clicked System instructions button")
+        print(f"[DEBUG] set_system_instructions: SI button clicked")
         time.sleep(2)
         
         # Step 3: Find the textarea with id="custom-si-textarea"
+        print(f"[DEBUG] set_system_instructions: Step 3 - Finding textarea")
+        breakpoint()  # DEBUG: Before finding textarea
         sys_textarea = wait.until(EC.visibility_of_element_located(
             (By.ID, "custom-si-textarea")
         ))
+        print(f"[DEBUG] set_system_instructions: Found textarea")
+        breakpoint()  # DEBUG: Before clicking textarea
         sys_textarea.click()
+        print(f"[DEBUG] set_system_instructions: Clicked textarea")
         time.sleep(0.3)
+        print(f"[DEBUG] set_system_instructions: Clearing textarea")
         sys_textarea.clear()
+        print(f"[DEBUG] set_system_instructions: Textarea cleared")
         time.sleep(0.3)
         
         # Paste instructions
+        print(f"[DEBUG] set_system_instructions: Pasting instructions")
+        breakpoint()  # DEBUG: Before paste
         if pyperclip:
             pyperclip.copy(instructions)
             pyautogui.hotkey('ctrl', 'v')
+            print(f"[DEBUG] set_system_instructions: Pasted via clipboard")
         else:
             sys_textarea.send_keys(instructions)
+            print(f"[DEBUG] set_system_instructions: Typed via send_keys")
         
         print("Entered system instructions")
+        print(f"[DEBUG] set_system_instructions: Instructions entered")
+        breakpoint()  # DEBUG: After paste
         time.sleep(1)
         
         # Step 4: Click "Save changes" button
+        print(f"[DEBUG] set_system_instructions: Step 4 - Finding Save button")
+        breakpoint()  # DEBUG: Before finding Save button
         save_btn = wait.until(EC.element_to_be_clickable(
             (By.XPATH, "//button[contains(@class, 'ms-button-primary') and contains(., 'Save changes')]")
         ))
+        print(f"[DEBUG] set_system_instructions: Found Save button")
+        breakpoint()  # DEBUG: Before clicking Save
         save_btn.click()
         print("Clicked Save changes")
+        print(f"[DEBUG] set_system_instructions: Save clicked")
         time.sleep(2)
         
         # Step 5: Close the panels using Escape key (most reliable)
         print("Closing panels with Escape...")
+        print(f"[DEBUG] set_system_instructions: Step 5 - Pressing Escape keys")
+        breakpoint()  # DEBUG: Before Escape keys
         pyautogui.press('escape')
+        print(f"[DEBUG] set_system_instructions: Escape 1 pressed")
         time.sleep(0.5)
         pyautogui.press('escape')
+        print(f"[DEBUG] set_system_instructions: Escape 2 pressed")
         time.sleep(0.5)
         pyautogui.press('escape')
+        print(f"[DEBUG] set_system_instructions: Escape 3 pressed")
         time.sleep(1)
         
         print("System instructions saved!")
+        print(f"[DEBUG] set_system_instructions: SUCCESS")
+        breakpoint()  # DEBUG: Success
         return True
         
     except Exception as e:
         print(f"System instructions error: {e}")
+        print(f"[DEBUG] set_system_instructions: EXCEPTION: {e}")
+        breakpoint()  # DEBUG: Exception
         # Try to close any open dialogs
         try:
             pyautogui.press('escape')
@@ -425,11 +667,13 @@ def set_system_instructions(driver, instructions):
             pass
         return False
     finally:
+        print(f"[DEBUG] set_system_instructions: Resuming tab monitor")
         resume_monitor()
 
 
 def save_app(driver, app_name):
     """Save the app with a specific name"""
+    breakpoint()  # DEBUG: Save app workflow
     wait = WebDriverWait(driver, 15)
     pause_monitor()
     
@@ -479,6 +723,7 @@ def save_app(driver, app_name):
 
 def get_app_url(driver):
     """Get the current app URL after saving"""
+    breakpoint()  # DEBUG: Capturing app URL
     time.sleep(2)
     url = driver.current_url
     print(f"App URL: {url}")
@@ -487,6 +732,7 @@ def get_app_url(driver):
 
 def save_agent_url(agent_id, url, filename="agents.json"):
     """Save the agent URL to a JSON file"""
+    breakpoint()  # DEBUG: Saving agent URL to JSON
     try:
         filepath = os.path.abspath(filename)
         
@@ -516,7 +762,11 @@ def save_agent_url(agent_id, url, filename="agents.json"):
 
 def send_chat_message(driver, message):
     """Type a message in the chatbox and send it"""
+    breakpoint()  # DEBUG: Chat message send workflow start
+    print(f"[DEBUG] send_chat_message: ========== STARTING ==========")
+    print(f"[DEBUG] send_chat_message: Message length: {len(message)} chars")
     wait = WebDriverWait(driver, 20)  # Increased timeout
+    print(f"[DEBUG] send_chat_message: Pausing tab monitor")
     pause_monitor()
     
     try:
@@ -526,20 +776,30 @@ def send_chat_message(driver, message):
         print(f"[send_chat_message] Message preview: {message[:50]}...")
         
         # Step 1: Ensure browser window is focused
+        print(f"[DEBUG] send_chat_message: Step 1 - Focusing browser window")
+        breakpoint()  # DEBUG: Before focusing window
         driver.switch_to.window(driver.current_window_handle)
+        print(f"[DEBUG] send_chat_message: Switched to current window handle")
         driver.execute_script("window.focus();")
+        print(f"[DEBUG] send_chat_message: Executed window.focus()")
         time.sleep(0.5)
         
         # Step 2: Wait for page to be ready (check for chat container)
+        print(f"[DEBUG] send_chat_message: Step 2 - Finding chat container")
+        breakpoint()  # DEBUG: Before finding chat container
         try:
             wait.until(EC.presence_of_element_located(
                 (By.CSS_SELECTOR, "div.input-container, .chat-input, ms-autosize-textarea")
             ))
             print("[send_chat_message] Chat container found")
+            print(f"[DEBUG] send_chat_message: Chat container located")
         except:
             print("[send_chat_message] WARNING: Chat container not found, proceeding anyway")
+            print(f"[DEBUG] send_chat_message: WARNING - No chat container")
         
         # Step 3: Find the chatbox with multiple fallback selectors
+        print(f"[DEBUG] send_chat_message: Step 3 - Finding chatbox textarea")
+        breakpoint()  # DEBUG: Before finding chatbox
         chatbox = None
         selectors = [
             "div.input-container textarea",
@@ -555,18 +815,24 @@ def send_chat_message(driver, message):
             try:
                 elements = driver.find_elements(By.CSS_SELECTOR, selector)
                 print(f"[send_chat_message] Selector '{selector}' → {len(elements)} element(s)")
+                print(f"[DEBUG] send_chat_message: Trying selector: {selector} -> {len(elements)} found")
                 for el in elements:
                     if el.is_displayed() and el.is_enabled():
                         chatbox = el
                         print(f"[send_chat_message] ✓ Using: {selector}")
+                        print(f"[DEBUG] send_chat_message: ✓ Using this element")
+                        breakpoint()  # DEBUG: Found chatbox
                         break
                 if chatbox:
                     break
             except Exception as e:
+                print(f"[DEBUG] send_chat_message: Selector error: {e}")
                 continue
         
         if not chatbox:
             print("[send_chat_message] ERROR: Chatbox not found!")
+            print(f"[DEBUG] send_chat_message: FAILED - No chatbox found")
+            breakpoint()  # DEBUG: Chatbox not found
             textareas = driver.find_elements(By.TAG_NAME, "textarea")
             print(f"[send_chat_message] Found {len(textareas)} textarea(s) on page")
             for i, ta in enumerate(textareas):
@@ -663,6 +929,7 @@ def send_chat_message(driver, message):
 
 def select_model(driver, model_name="Gemini 3 Pro Preview"):
     """Select the AI model from Advanced settings dropdown"""
+    breakpoint()  # DEBUG: Model selection workflow
     wait = WebDriverWait(driver, 15)
     pause_monitor()
     
@@ -715,6 +982,7 @@ def select_model(driver, model_name="Gemini 3 Pro Preview"):
 
 def spawn_agent(driver, agent_id):
     """Spawn a single agent: create zip, upload, configure, save"""
+    breakpoint()  # DEBUG: Agent spawn workflow start
     print(f"\n{'='*50}")
     print(f"SPAWNING AGENT: {agent_id}")
     print(f"{'='*50}")
@@ -801,6 +1069,7 @@ Confirm you understand by editing output.md with STATUS: READY."""
 
 def capture_agent_handles(driver):
     """Scan all open tabs and capture handles for AGENT: tabs"""
+    breakpoint()  # DEBUG: Scanning tabs for agent handles
     global agent_handles
     
     try:
@@ -851,6 +1120,7 @@ def capture_agent_handles(driver):
 
 
 def login_to_google(driver, wait):
+    breakpoint()  # DEBUG: Google login flow
     email = os.getenv("GOOGLE_EMAIL")
     password = os.getenv("GOOGLE_PASSWORD")
 
@@ -899,6 +1169,7 @@ def login_to_google(driver, wait):
 
 def main():
     """Original standalone main - spawns one agent then waits"""
+    breakpoint()  # DEBUG: Standalone main entry
     extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
     profile_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chrome_profile"))
     
@@ -1006,6 +1277,7 @@ def api_roster():
 
 @app.route('/api/spawn', methods=['POST'])
 def api_spawn():
+    breakpoint()  # DEBUG: API spawn endpoint hit
     global driver_ref
     if not driver_ref:
         return jsonify({"error": "Browser not initialized"}), 503
@@ -1028,6 +1300,7 @@ def api_spawn():
 
 @app.route('/api/chat', methods=['POST'])
 def api_chat():
+    breakpoint()  # DEBUG: API chat endpoint hit
     global driver_ref, agent_handles
     if not driver_ref:
         return jsonify({"error": "Browser not initialized"}), 503
@@ -1107,6 +1380,7 @@ def run_flask():
 
 def main_with_api():
     """Main function that runs browser + Flask API server"""
+    breakpoint()  # DEBUG: Application startup
     global driver_ref
     
     extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "extension"))
