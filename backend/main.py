@@ -1027,7 +1027,7 @@ def send_chat_message(driver, message):
         try:
             # Wait up to 60s for AI to finish processing
             # Check: running class, thinking indicator, button disabled, or button in "cancel" state
-            for attempt in range(30):
+            for attempt in range(60):  # Up to 2 minutes (was 30)
                 time.sleep(2)
                 
                 # Check if still processing by multiple signals
@@ -1037,26 +1037,33 @@ def send_chat_message(driver, message):
                 running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
                 if running_btn:
                     is_processing = True
+                    print(f"[send_chat_message] Still running... (attempt {attempt+1})")
                     
                 # 2. Check thinking indicator
                 thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
                 if thinking:
                     is_processing = True
+                    print(f"[send_chat_message] Still thinking... (attempt {attempt+1})")
                     
                 # 3. Check if send button is in "cancel" state (aria-label="Cancel")
                 cancel_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button[aria-label='Cancel']")
                 if cancel_btn:
                     is_processing = True
-                    
-                # 4. Check if send button is disabled (means ready to receive new message)
-                send_btn_disabled = driver.find_elements(By.CSS_SELECTOR, "button.send-button[disabled], button.send-button.disabled")
+                    print(f"[send_chat_message] Cancel button visible... (attempt {attempt+1})")
                 
+                # 4. Check for Checkpoint indicator (means AI finished writing)
+                checkpoint = driver.find_elements(By.XPATH, "//div[contains(text(), 'Checkpoint')]")
+                if checkpoint:
+                    print(f"[send_chat_message] ✓ Checkpoint detected, AI finished")
+                    break
+                    
                 if is_processing:
-                    logger.debug("CHAT", f"Still processing (attempt {attempt+1}/30)")
+                    logger.debug("CHAT", f"Still processing (attempt {attempt+1}/60)")
                     continue
                 
-                # Not processing anymore (button either enabled or disabled but not running/canceling)
-                if attempt > 2:  # Give it at least 6 seconds
+                # Not processing anymore - wait a bit more to ensure output.md is written
+                if attempt > 3:  # At least 8 seconds without processing indicators
+                    print(f"[send_chat_message] No processing indicators, proceeding...")
                     break
             
             # P9 Phase 5: Read response from output.md via Monaco editor
