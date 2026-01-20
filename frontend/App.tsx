@@ -7,200 +7,551 @@ import {
   Trash2, Play, Upload, FileCode, HardDrive, Power, ChevronDown, Radio
 } from 'lucide-react';
 
+// ============================================
+// DEBUG UTILITIES
+// ============================================
+const DEBUG = true; // Master debug switch
+
+const debugLog = (component: string, action: string, data?: any) => {
+  if (!DEBUG) return;
+  const timestamp = new Date().toISOString().split('T')[1].slice(0, 12);
+  console.log(`%c[${timestamp}] ${component}: ${action}`, 'color: #10b981; font-weight: bold;', data || '');
+};
+
+const debugState = (name: string, value: any) => {
+  if (!DEBUG) return;
+  console.log(`%c[STATE] ${name}:`, 'color: #3b82f6; font-weight: bold;', value);
+};
+
+const debugEvent = (handler: string, event?: any) => {
+  if (!DEBUG) return;
+  console.log(`%c[EVENT] ${handler}`, 'color: #f59e0b; font-weight: bold;', event || '');
+  debugger; // BREAKPOINT: Event handler
+};
+
+const debugRender = (component: string, props?: any) => {
+  if (!DEBUG) return;
+  console.log(`%c[RENDER] ${component}`, 'color: #8b5cf6;', props || '');
+};
+
 export default function App() {
-  // State
+  debugRender('App', { timestamp: Date.now() });
+  debugger; // BREAKPOINT: App component render
+
+  // ============================================
+  // STATE DECLARATIONS
+  // ============================================
+
+  // System State
   const [status, setStatus] = useState<SystemStatus>({ status: 'offline', driver_initialized: false });
+  debugState('status', status);
+
   const [activeAgents, setActiveAgents] = useState<ActiveAgentMap>({});
+  debugState('activeAgents', Object.keys(activeAgents));
+
   const [roster, setRoster] = useState<RosterResponse>({});
+  debugState('roster', Object.keys(roster));
+
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  debugState('selectedCategory', selectedCategory);
+
   const [spawning, setSpawning] = useState<string | null>(null);
+  debugState('spawning', spawning);
 
   // Chat State
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-  const [targetAgentId, setTargetAgentId] = useState<string | null>(null); // null = broadcast
+  debugState('chatHistory.length', chatHistory.length);
+
+  const [targetAgentId, setTargetAgentId] = useState<string | null>(null);
+  debugState('targetAgentId', targetAgentId);
+
   const [showTargetMenu, setShowTargetMenu] = useState(false);
 
   // File State
   const [files, setFiles] = useState<UploadedFile[]>([]);
+  debugState('files', files.map(f => f.filename));
+
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   // Search State
   const [searchTerm, setSearchTerm] = useState('');
 
+  // P7: Toast State for error messages
+  const [toast, setToast] = useState<{ message: string, type: 'error' | 'success' } | null>(null);
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const targetMenuRef = useRef<HTMLDivElement>(null);
 
-  // --- Effects ---
+  // Helper: Show toast
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    debugLog('showToast', message, type);
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 5000); // Auto-dismiss after 5s
+  };
 
-  // Initial Fetch
-  useEffect(() => {
-    api.getRoster().then(data => {
-      setRoster(data);
-      const categories = Object.keys(data);
-      if (categories.length > 0) setSelectedCategory(categories[0]);
-    });
-    fetchFiles();
-  }, []);
+  // ============================================
+  // EFFECTS
+  // ============================================
 
-  // Polling
+  // Initial Fetch (P7: with error handling)
   useEffect(() => {
-    const poll = async () => {
+    debugLog('useEffect', 'Initial fetch - mounting');
+    debugger; // BREAKPOINT: Component mount
+
+    const initRoster = async () => {
+      debugLog('initRoster', 'Fetching roster...');
+      debugger; // BREAKPOINT: Before roster fetch
       try {
-        const s = await api.getStatus();
-        setStatus(s);
-        const a = await api.getAgents();
-        setActiveAgents(a);
+        const data = await api.getRoster();
+        debugLog('initRoster', 'Roster received', data);
+        debugger; // BREAKPOINT: After roster fetch
+        setRoster(data);
+        const categories = Object.keys(data);
+        debugLog('initRoster', 'Categories', categories);
+        debugLog('initRoster', `Loaded ${categories.length} categories, ${Object.values(data).flat().length} agents`);
+        if (categories.length > 0) {
+          debugLog('initRoster', 'Setting first category', categories[0]);
+          setSelectedCategory(categories[0]);
+        }
       } catch (e) {
-        // Silent fail on poll
+        debugLog('initRoster', 'Roster fetch error', e);
+        setRoster({});  // Empty roster on error
+        showToast('Failed to load roster. Is the backend running?', 'error');
       }
     };
-    poll();
-    const interval = setInterval(poll, 2000);
-    return () => clearInterval(interval);
+
+    initRoster();
+    fetchFiles();
+
+    return () => {
+      debugLog('useEffect', 'Initial fetch - cleanup');
+    };
   }, []);
+
+  // P6: Status Check with Retry Logic
+  const [retryCount, setRetryCount] = useState(0);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY_MS = 3000;
+
+  // Initial status check with retry
+  useEffect(() => {
+    debugLog('useEffect', 'Initial status check with retry');
+    let isMounted = true;
+
+    const checkStatus = async (attempt: number): Promise<boolean> => {
+      debugLog('checkStatus', `Attempt ${attempt} of ${MAX_RETRIES}`);
+      try {
+        const s = await api.getStatus();
+        debugLog('checkStatus', 'Status received', s);
+        if (isMounted) {
+          setStatus(s);
+          setRetryCount(0);
+          setConnectionError(null);
+        }
+        return true;
+      } catch (e) {
+        debugLog('checkStatus', `Attempt ${attempt} failed`, e);
+        if (isMounted) {
+          setStatus({ status: 'offline', driver_initialized: false });
+        }
+        return false;
+      }
+    };
+
+    const initWithRetry = async () => {
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        debugLog('initWithRetry', `Starting attempt ${attempt}`);
+        const success = await checkStatus(attempt);
+        if (success) {
+          debugLog('initWithRetry', 'Connection successful');
+          return;
+        }
+        if (attempt < MAX_RETRIES) {
+          debugLog('initWithRetry', `Waiting ${RETRY_DELAY_MS}ms before retry...`);
+          if (isMounted) setRetryCount(attempt);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        }
+      }
+      // Max retries reached
+      debugLog('initWithRetry', 'Max retries reached, showing error');
+      if (isMounted) {
+        setConnectionError('Backend unreachable after 3 attempts. Is the backend running?');
+        setRetryCount(MAX_RETRIES);
+      }
+    };
+
+    initWithRetry();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Polling (after initial connection established)
+  useEffect(() => {
+    if (status.status === 'offline' && connectionError) {
+      debugLog('useEffect', 'Polling skipped - connection error');
+      return;
+    }
+
+    debugLog('useEffect', 'Polling setup');
+    debugger; // BREAKPOINT: Polling setup
+
+    const poll = async () => {
+      debugLog('poll', 'Polling cycle start');
+      try {
+        debugLog('poll', 'Fetching status...');
+        const s = await api.getStatus();
+        debugLog('poll', 'Status received', s);
+        debugger; // BREAKPOINT: Status update
+        setStatus(s);
+        setConnectionError(null);
+
+        debugLog('poll', 'Fetching agents...');
+        const a = await api.getAgents();
+        debugLog('poll', 'Agents received', Object.keys(a));
+        debugger; // BREAKPOINT: Agents update
+        setActiveAgents(a);
+
+        debugLog('poll', 'Polling cycle complete');
+      } catch (e) {
+        debugLog('poll', 'Polling error', e);
+        debugger; // BREAKPOINT: Polling error
+        setStatus({ status: 'offline', driver_initialized: false });
+      }
+    };
+
+    poll();
+    const interval = setInterval(() => {
+      debugLog('poll', 'Interval tick');
+      poll();
+    }, 2000);
+
+    return () => {
+      debugLog('useEffect', 'Polling cleanup');
+      clearInterval(interval);
+    };
+  }, [connectionError]);
 
   // Auto-scroll chat
   useEffect(() => {
+    debugLog('useEffect', 'Chat auto-scroll', { historyLength: chatHistory.length });
+    debugger; // BREAKPOINT: Chat scroll
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory]);
 
   // Click outside listener for target menu
   useEffect(() => {
+    debugLog('useEffect', 'Click outside listener setup');
+
     function handleClickOutside(event: MouseEvent) {
+      debugEvent('handleClickOutside', { target: event.target });
       if (targetMenuRef.current && !targetMenuRef.current.contains(event.target as Node)) {
+        debugLog('handleClickOutside', 'Closing target menu');
         setShowTargetMenu(false);
       }
     }
+
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    return () => {
+      debugLog('useEffect', 'Click outside listener cleanup');
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
   }, [targetMenuRef]);
 
-  // --- Handlers ---
+  // ============================================
+  // HANDLERS
+  // ============================================
 
   const handleSpawn = async (agentId: string) => {
+    debugEvent('handleSpawn', { agentId });
+    debugger; // BREAKPOINT: Spawn start
+    console.log('[FLOW] handleSpawn: Starting spawn sequence');
+    console.log('[FLOW] handleSpawn: Agent ID:', agentId);
+
     setSpawning(agentId);
+    debugLog('handleSpawn', 'Set spawning state', agentId);
+
     addToLog('system', `> INITIATING SPAWN SEQUENCE: ${agentId}`);
+    debugLog('handleSpawn', 'Added log message');
+
     try {
+      console.log('[FLOW] handleSpawn: Calling API...');
+      debugger; // BREAKPOINT: Before spawn API call
       const success = await api.spawnAgent(agentId);
+      console.log('[FLOW] handleSpawn: API response:', success);
+      debugger; // BREAKPOINT: After spawn API call
+
       if (success) {
+        debugLog('handleSpawn', 'Spawn success', agentId);
         addToLog('system', `> COMMAND SENT: SPAWN ${agentId}`);
       } else {
+        debugLog('handleSpawn', 'Spawn failed', agentId);
         addToLog('system', `> ERROR: FAILED TO SPAWN ${agentId}`);
       }
     } catch (e) {
+      debugLog('handleSpawn', 'Spawn error', e);
+      debugger; // BREAKPOINT: Spawn error
       addToLog('system', `> ERROR: CONNECTION FAILED`);
     }
+
     setSpawning(null);
+    debugLog('handleSpawn', 'Spawn sequence complete');
   };
 
   const handleKill = async (agentId: string) => {
+    debugEvent('handleKill', { agentId });
+    debugger; // BREAKPOINT: Kill start
+    console.log('[FLOW] handleKill: Terminating agent:', agentId);
+
     addToLog('system', `> TERMINATING: ${agentId}`);
+    debugLog('handleKill', 'Added termination log');
+
+    debugger; // BREAKPOINT: Before deactivate API call
     await api.deactivateAgent(agentId);
+    debugLog('handleKill', 'Deactivation complete');
+    debugger; // BREAKPOINT: After deactivate API call
+
     // Optimistic update
     const newActive = { ...activeAgents };
     delete newActive[agentId];
+    debugLog('handleKill', 'Updating active agents', Object.keys(newActive));
     setActiveAgents(newActive);
-    if (targetAgentId === agentId) setTargetAgentId(null);
+
+    if (targetAgentId === agentId) {
+      debugLog('handleKill', 'Clearing target agent');
+      setTargetAgentId(null);
+    }
+
+    debugLog('handleKill', 'Kill sequence complete');
   };
 
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    debugEvent('handleSendChat', { inputLength: chatInput.length });
+    debugger; // BREAKPOINT: Chat send start
+
+    console.log('[FLOW] handleSendChat: Form submitted');
+    console.log('[FLOW] handleSendChat: Input:', chatInput);
+    console.log('[FLOW] handleSendChat: Target:', targetAgentId);
+
+    if (!chatInput.trim()) {
+      debugLog('handleSendChat', 'Empty input, ignoring');
+      return;
+    }
 
     const msg = chatInput;
+    debugLog('handleSendChat', 'Message captured', msg.substring(0, 50));
     setChatInput('');
+    debugLog('handleSendChat', 'Input cleared');
 
     const targetDisplay = targetAgentId ? `[@${targetAgentId}] ` : '';
+    debugLog('handleSendChat', 'Target display', targetDisplay);
     addToLog('user', `${targetDisplay}${msg}`, targetAgentId || undefined);
+    debugLog('handleSendChat', 'Added user message to log');
 
     try {
-      const success = await api.chat(msg, targetAgentId || undefined);
-      if (!success) {
+      console.log('[FLOW] handleSendChat: Calling chat API...');
+      debugger; // BREAKPOINT: Before chat API call
+      const result = await api.chat(msg, targetAgentId || undefined);
+      console.log('[FLOW] handleSendChat: API response:', result);
+      debugger; // BREAKPOINT: After chat API call
+
+      if (!result.success) {
+        debugLog('handleSendChat', 'Chat send failed');
         addToLog('system', '> ERROR: MESSAGE FAILED TO SEND');
+      } else if (result.broadcast && result.results) {
+        // P10: Broadcast mode - display responses from all agents
+        debugLog('handleSendChat', 'BROADCAST response received');
+        const agentIds = Object.keys(result.results);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const agentId of agentIds) {
+          const agentResult = result.results[agentId];
+          if (agentResult.success) {
+            successCount++;
+            if (agentResult.response) {
+              addToLog('agent', agentResult.response, agentId);
+            } else {
+              addToLog('agent', '(No response captured)', agentId);
+            }
+          } else {
+            errorCount++;
+            addToLog('system', `> ${agentId}: ERROR - ${agentResult.error || 'Unknown error'}`);
+          }
+        }
+
+        addToLog('system', `> BROADCAST COMPLETE: ${successCount}/${agentIds.length} agents responded`);
+      } else {
+        debugLog('handleSendChat', 'Chat send success');
+        // Display agent response if available
+        if (result.response) {
+          debugLog('handleSendChat', 'Agent response received', result.response.substring(0, 100));
+          addToLog('agent', result.response, targetAgentId || undefined);
+        } else {
+          addToLog('system', '> Message sent (no response captured)');
+        }
       }
     } catch (e) {
+      debugLog('handleSendChat', 'Chat error', e);
+      debugger; // BREAKPOINT: Chat error
       addToLog('system', '> ERROR: BACKEND UNREACHABLE');
     }
+
+    debugLog('handleSendChat', 'Chat send complete');
   };
 
   const addToLog = (role: ChatMessage['role'], content: string, agentId?: string) => {
-    setChatHistory(prev => [...prev, {
+    debugLog('addToLog', 'Adding message', { role, contentPreview: content.substring(0, 30), agentId });
+    debugger; // BREAKPOINT: Adding log message
+
+    const newMessage = {
       id: Date.now().toString(),
       role,
       content,
       timestamp: Date.now(),
       agentId
-    }]);
+    };
+
+    debugLog('addToLog', 'New message object', newMessage);
+    setChatHistory(prev => {
+      debugLog('addToLog', 'Previous history length', prev.length);
+      const newHistory = [...prev, newMessage];
+      debugLog('addToLog', 'New history length', newHistory.length);
+      return newHistory;
+    });
   };
 
-  // --- File Handlers ---
+  // ============================================
+  // FILE HANDLERS
+  // ============================================
 
   const fetchFiles = async () => {
+    debugLog('fetchFiles', 'Fetching files list');
+    debugger; // BREAKPOINT: Fetch files start
     const data = await api.getFiles();
+    debugLog('fetchFiles', 'Files received', data);
+    debugger; // BREAKPOINT: Fetch files complete
     setFiles(data);
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    debugEvent('handleFileChange', { files: e.target.files });
+    debugger; // BREAKPOINT: File input change
     const file = e.target.files?.[0];
-    if (file) await processUpload(file);
+    if (file) {
+      debugLog('handleFileChange', 'File selected', { name: file.name, size: file.size });
+      await processUpload(file);
+    }
   };
 
   const processUpload = async (file: File) => {
+    debugLog('processUpload', 'Starting upload', { name: file.name, size: file.size, type: file.type });
+    debugger; // BREAKPOINT: Upload start
+
     setUploading(true);
+    debugLog('processUpload', 'Set uploading state');
+
     addToLog('system', `> UPLOADING: ${file.name}`);
+
+    debugger; // BREAKPOINT: Before upload API call
     const result = await api.uploadFile(file);
+    debugger; // BREAKPOINT: After upload API call
+
     if (result) {
+      debugLog('processUpload', 'Upload success', result);
       addToLog('system', `> UPLOADED: ${result.filename} (${Math.round(result.size / 1024)}KB)`);
-      fetchFiles();
+      await fetchFiles();
     } else {
+      debugLog('processUpload', 'Upload failed');
+      debugger; // BREAKPOINT: Upload failed
       addToLog('system', '> ERROR: Upload failed');
     }
+
     setUploading(false);
+    debugLog('processUpload', 'Upload complete');
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    debugEvent('handleDragOver');
     setIsDragging(true);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
+    debugEvent('handleDragLeave');
     setIsDragging(false);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    debugEvent('handleDrop', { files: e.dataTransfer.files });
+    debugger; // BREAKPOINT: File dropped
+
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) await processUpload(file);
+    if (file) {
+      debugLog('handleDrop', 'File dropped', { name: file.name, size: file.size });
+      await processUpload(file);
+    }
   };
 
   const handleParse = async (filename: string) => {
+    debugEvent('handleParse', { filename });
+    debugger; // BREAKPOINT: Parse start
+
     addToLog('system', `> PARSING: ${filename}`);
+    debugLog('handleParse', 'Starting parse');
+
+    debugger; // BREAKPOINT: Before parse API call
     const result = await api.parseFile(filename);
+    debugger; // BREAKPOINT: After parse API call
+
     if (result) {
+      debugLog('handleParse', 'Parse success', { length: result.text.length });
       addToLog('system', `> EXTRACTED ${result.length} chars from ${filename}`);
       const preview = result.text.substring(0, 500);
       addToLog('agent', `[${filename} PREVIEW]\n${preview}${result.text.length > 500 ? '...(truncated)' : ''}`);
     } else {
+      debugLog('handleParse', 'Parse failed');
+      debugger; // BREAKPOINT: Parse failed
       addToLog('system', '> ERROR: Parse failed');
     }
   };
 
   const handleDeleteFile = async (filename: string) => {
+    debugEvent('handleDeleteFile', { filename });
+    debugger; // BREAKPOINT: Delete file start
+
+    debugger; // BREAKPOINT: Before delete API call
     await api.deleteFile(filename);
-    fetchFiles();
+    debugger; // BREAKPOINT: After delete API call
+
+    debugLog('handleDeleteFile', 'File deleted, refreshing list');
+    await fetchFiles();
     addToLog('system', `> DELETED: ${filename}`);
   };
 
-  // --- Computed ---
+  // ============================================
+  // COMPUTED VALUES
+  // ============================================
 
   const filteredRoster = useMemo(() => {
-    if (!searchTerm) return roster;
+    debugLog('useMemo', 'Computing filteredRoster', { searchTerm });
+    debugger; // BREAKPOINT: Computing filtered roster
+
+    if (!searchTerm) {
+      debugLog('filteredRoster', 'No search term, returning full roster');
+      return roster;
+    }
+
     const filtered: RosterResponse = {};
     Object.keys(roster).forEach(cat => {
       const matches = roster[cat].filter(agent =>
@@ -210,23 +561,63 @@ export default function App() {
       );
       if (matches.length > 0) filtered[cat] = matches;
     });
+
+    debugLog('filteredRoster', 'Filtered result', { categories: Object.keys(filtered), totalAgents: Object.values(filtered).flat().length });
     return filtered;
   }, [roster, searchTerm]);
 
   // Auto-expand category if search is active
   useEffect(() => {
+    debugLog('useEffect', 'Search category expansion', { searchTerm });
     if (searchTerm) {
       const firstCat = Object.keys(filteredRoster)[0];
-      if (firstCat) setSelectedCategory(firstCat);
+      if (firstCat) {
+        debugLog('useEffect', 'Expanding category', firstCat);
+        setSelectedCategory(firstCat);
+      }
     }
   }, [searchTerm, filteredRoster]);
 
   const activeAgentList = Object.keys(activeAgents);
+  debugState('activeAgentList', activeAgentList);
+
   const categories = Object.keys(filteredRoster);
+  debugState('categories', categories);
+
+  // ============================================
+  // RENDER
+  // ============================================
+
+  debugLog('App', 'Rendering JSX', {
+    statusOnline: status.status === 'online',
+    activeAgentCount: activeAgentList.length,
+    categoryCount: categories.length,
+    fileCount: files.length,
+    chatMessageCount: chatHistory.length
+  });
+  debugger; // BREAKPOINT: Before JSX render
 
   return (
     <div className="flex h-screen bg-background text-text font-mono overflow-hidden selection:bg-primary/30">
       <div className="scanline"></div>
+
+      {/* P7: Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg border shadow-lg animate-in fade-in slide-in-from-top-2 ${toast.type === 'error'
+          ? 'bg-red-500/10 border-red-500/30 text-red-400'
+          : 'bg-primary/10 border-primary/30 text-primary'
+          }`}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm">{toast.message}</span>
+            <button
+              onClick={() => setToast(null)}
+              className="text-xs opacity-50 hover:opacity-100"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Sidebar: Roster */}
       <div className="w-80 border-r border-border flex flex-col bg-surface z-10 shadow-2xl">
@@ -242,15 +633,21 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-2 text-[10px] uppercase mb-4">
-            <div className={`px-2 py-1 rounded border flex items-center gap-2 transition-colors ${status.status === 'online' ? 'bg-primary/10 text-primary border-primary/30' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
-              <div className={`w-1.5 h-1.5 rounded-full ${status.status === 'online' ? 'bg-primary animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`}></div>
-              {status.status}
+            <div className={`px-2 py-1 rounded border flex items-center gap-2 transition-colors ${status.status === 'online' ? 'bg-primary/10 text-primary border-primary/30' : retryCount > 0 && retryCount < MAX_RETRIES ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30' : 'bg-red-500/10 text-red-400 border-red-500/30'}`}>
+              <div className={`w-1.5 h-1.5 rounded-full ${status.status === 'online' ? 'bg-primary animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : retryCount > 0 && retryCount < MAX_RETRIES ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'}`}></div>
+              {status.status === 'online' ? 'ONLINE' : retryCount > 0 && retryCount < MAX_RETRIES ? `RETRY ${retryCount}/${MAX_RETRIES}` : 'OFFLINE'}
             </div>
             <div className={`px-2 py-1 rounded border ${status.driver_initialized ? 'border-accent/30 text-accent bg-accent/10' : 'border-border text-textDim'}`}>
               DRIVER: {status.driver_initialized ? 'ON' : 'OFF'}
             </div>
           </div>
 
+          {/* P6: Connection Error Message */}
+          {connectionError && (
+            <div className="mb-4 p-2 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-xs">
+              {connectionError}
+            </div>
+          )}
           <div className="relative group">
             <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-textDim group-focus-within:text-primary transition-colors">
               <Search size={14} />
@@ -259,7 +656,10 @@ export default function App() {
               type="text"
               placeholder="SEARCH AGENTS..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                debugEvent('searchInput.onChange', { value: e.target.value });
+                setSearchTerm(e.target.value);
+              }}
               className="w-full bg-background border border-border rounded-md pl-8 pr-3 py-1.5 text-xs text-white placeholder-textDim/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all"
             />
           </div>
@@ -275,7 +675,10 @@ export default function App() {
             categories.map(category => (
               <div key={category} className="border-b border-border/30">
                 <button
-                  onClick={() => setSelectedCategory(category === selectedCategory ? null : category)}
+                  onClick={() => {
+                    debugEvent('categoryButton.onClick', { category, wasSelected: category === selectedCategory });
+                    setSelectedCategory(category === selectedCategory ? null : category);
+                  }}
                   className={`w-full text-left px-4 py-3 text-xs font-bold uppercase tracking-wider flex justify-between items-center transition-all duration-200 ${selectedCategory === category ? 'text-white bg-surfaceHighlight border-l-2 border-l-primary' : 'text-textDim hover:text-white hover:bg-surfaceHighlight/30 border-l-2 border-l-transparent'}`}
                 >
                   {category}
@@ -298,7 +701,11 @@ export default function App() {
                               </span>
                             ) : (
                               <button
-                                onClick={(e) => { e.stopPropagation(); handleSpawn(agent.id); }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  debugEvent('spawnButton.onClick', { agentId: agent.id });
+                                  handleSpawn(agent.id);
+                                }}
                                 disabled={spawning !== null}
                                 className="opacity-0 group-hover:opacity-100 bg-white text-black text-[9px] font-bold px-2 py-0.5 rounded hover:bg-gray-200 disabled:opacity-50 transition-opacity flex items-center gap-1 shadow-md"
                               >
@@ -349,7 +756,10 @@ export default function App() {
                       </div>
                       <div className="flex gap-1">
                         <button
-                          onClick={() => handleKill(id)}
+                          onClick={() => {
+                            debugEvent('killButton.onClick', { agentId: id });
+                            handleKill(id);
+                          }}
                           className="text-textDim hover:text-red-400 transition-colors p-1 hover:bg-white/10 rounded"
                           title="Terminate Agent"
                         >
@@ -361,6 +771,7 @@ export default function App() {
                           rel="noopener noreferrer"
                           className="text-textDim hover:text-white transition-colors p-1 hover:bg-white/10 rounded"
                           title="Open in AI Studio"
+                          onClick={() => debugEvent('externalLink.onClick', { agentId: id, url: activeAgents[id].url })}
                         >
                           <ExternalLink size={14} />
                         </a>
@@ -432,14 +843,20 @@ export default function App() {
                     <div className="text-textDim text-[9px] font-mono">{Math.round(file.size / 1024)} KB</div>
                     <div className="flex gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
                       <button
-                        onClick={() => handleParse(file.filename)}
+                        onClick={() => {
+                          debugEvent('parseButton.onClick', { filename: file.filename });
+                          handleParse(file.filename);
+                        }}
                         className="p-1 hover:bg-primary/20 hover:text-primary rounded"
                         title="Parse Text"
                       >
                         <FileText size={12} />
                       </button>
                       <button
-                        onClick={() => handleDeleteFile(file.filename)}
+                        onClick={() => {
+                          debugEvent('deleteButton.onClick', { filename: file.filename });
+                          handleDeleteFile(file.filename);
+                        }}
                         className="p-1 hover:bg-red-500/20 hover:text-red-400 rounded"
                         title="Delete"
                       >
@@ -488,7 +905,7 @@ export default function App() {
                 >
                   <div className="flex items-center gap-2 mb-1.5 border-b border-white/5 pb-1">
                     <span className={`text-[9px] font-bold uppercase tracking-wider ${msg.role === 'user' ? 'text-accent' :
-                        msg.role === 'system' ? 'text-primary' : 'text-purple-400'
+                      msg.role === 'system' ? 'text-primary' : 'text-purple-400'
                       }`}>
                       {msg.role === 'agent' ? 'AGENT RESPONSE' : msg.role}
                       {msg.agentId && <span className="ml-2 opacity-70">[{msg.agentId}]</span>}
@@ -511,10 +928,13 @@ export default function App() {
               <div className="relative" ref={targetMenuRef}>
                 <button
                   type="button"
-                  onClick={() => setShowTargetMenu(!showTargetMenu)}
+                  onClick={() => {
+                    debugEvent('targetMenuButton.onClick', { showTargetMenu: !showTargetMenu });
+                    setShowTargetMenu(!showTargetMenu);
+                  }}
                   className={`h-full flex items-center gap-2 px-3 py-3.5 rounded-lg border text-xs font-bold transition-all ${targetAgentId
-                      ? 'bg-accent/20 border-accent text-accent'
-                      : 'bg-surfaceHighlight border-border text-textDim hover:text-white'
+                    ? 'bg-accent/20 border-accent text-accent'
+                    : 'bg-surfaceHighlight border-border text-textDim hover:text-white'
                     }`}
                 >
                   {targetAgentId || "BROADCAST"}
@@ -526,7 +946,11 @@ export default function App() {
                     <div className="p-1">
                       <button
                         type="button"
-                        onClick={() => { setTargetAgentId(null); setShowTargetMenu(false); }}
+                        onClick={() => {
+                          debugEvent('broadcastButton.onClick');
+                          setTargetAgentId(null);
+                          setShowTargetMenu(false);
+                        }}
                         className={`w-full text-left px-3 py-2 rounded text-xs flex items-center gap-2 ${!targetAgentId ? 'bg-primary/20 text-primary' : 'text-textDim hover:bg-white/5'}`}
                       >
                         <Radio size={12} /> BROADCAST (ALL)
@@ -540,7 +964,11 @@ export default function App() {
                         <button
                           key={id}
                           type="button"
-                          onClick={() => { setTargetAgentId(id); setShowTargetMenu(false); }}
+                          onClick={() => {
+                            debugEvent('targetAgentButton.onClick', { agentId: id });
+                            setTargetAgentId(id);
+                            setShowTargetMenu(false);
+                          }}
                           className={`w-full text-left px-3 py-2 rounded text-xs flex items-center gap-2 ${targetAgentId === id ? 'bg-accent/20 text-accent' : 'text-textDim hover:bg-white/5 hover:text-white'}`}
                         >
                           <div className={`w-1.5 h-1.5 rounded-full ${targetAgentId === id ? 'bg-accent' : 'bg-white/30'}`} />
@@ -558,13 +986,17 @@ export default function App() {
                 <input
                   type="text"
                   value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
+                  onChange={(e) => {
+                    debugEvent('chatInput.onChange', { value: e.target.value.substring(0, 20) });
+                    setChatInput(e.target.value);
+                  }}
                   placeholder={targetAgentId ? `Command ${targetAgentId}...` : "Broadcast command to all agents..."}
                   className="w-full bg-background/80 border border-border rounded-lg pl-10 pr-24 py-3.5 text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/50 text-white placeholder-textDim/30 shadow-inner font-mono transition-all"
                 />
                 <button
                   type="submit"
                   disabled={!chatInput.trim()}
+                  onClick={() => debugEvent('sendButton.onClick', { hasInput: !!chatInput.trim() })}
                   className="absolute right-2 top-1/2 -translate-y-1/2 bg-surfaceHighlight hover:bg-primary hover:text-black text-textDim text-xs font-bold px-4 py-2 rounded-md transition-all disabled:opacity-50 disabled:hover:bg-surfaceHighlight disabled:hover:text-textDim flex items-center gap-2"
                 >
                   SEND <Send size={12} />
