@@ -36,6 +36,52 @@ driver_ref = None
 target_tab_handle = None
 agent_handles = {}  # {agent_id: window_handle} - track each agent's tab
 
+# =============================================================================
+# P12: Browser Health Check and Recovery
+# - is_browser_alive(): Check if browser is still running
+# - ensure_browser(): Restart browser if dead, clear stale handles
+# =============================================================================
+def is_browser_alive():
+    """Check if browser is still running"""
+    global driver_ref
+    
+    if driver_ref is None:
+        return False
+    
+    try:
+        # Try to access a property - will fail if browser closed
+        _ = driver_ref.window_handles
+        return True
+    except Exception:
+        return False
+
+def ensure_browser():
+    """Ensure browser is running, start if needed. Returns driver or None."""
+    global driver_ref, agent_handles
+    
+    if is_browser_alive():
+        return driver_ref
+    
+    print("[P12] Browser not running, attempting recovery...")
+    
+    # Clean up stale references
+    driver_ref = None
+    agent_handles.clear()  # All handles are invalid now
+    
+    try:
+        # Start new browser
+        driver_ref = init_driver()
+        
+        # Warm up with AI Studio
+        driver_ref.get("https://aistudio.google.com")
+        time.sleep(3)
+        
+        print("[P12] Browser recovered successfully")
+        return driver_ref
+    except Exception as e:
+        print(f"[P12] Failed to recover browser: {e}")
+        return None
+
 SKILLS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".agent", "skills"))
 
 
@@ -1648,8 +1694,11 @@ def api_roster():
 def api_spawn():
     # breakpoint()  # DEBUG: API spawn endpoint hit
     global driver_ref
+    
+    # P12: Ensure browser is running, recover if dead
+    driver_ref = ensure_browser()
     if not driver_ref:
-        return jsonify({"error": "Browser not initialized"}), 503
+        return jsonify({"error": "Browser not initialized and recovery failed"}), 503
     
     data = request.json
     agent_id = data.get('agent_id')
