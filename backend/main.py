@@ -1394,18 +1394,35 @@ def spawn_agent(driver, agent_id):
     
     # ==========================================================================
     # P11 Fix 1: Open new tab if there are already active agents
-    # This prevents overwriting an existing agent's tab
+    # P12 Fix: Use robust new tab detection (compare before/after handles)
     # ==========================================================================
     if agent_handles:
-        print(f"[spawn_agent] P11: {len(agent_handles)} agents already active, opening new tab")
+        print(f"[spawn_agent] P12: {len(agent_handles)} agents already active, opening new tab")
+        print(f"[spawn_agent] P12: Current handles in memory: {list(agent_handles.keys())}")
+        
+        # Get handles BEFORE opening new tab
+        before_tabs = driver.window_handles
+        print(f"[spawn_agent] P12: Browser tabs BEFORE: {len(before_tabs)}")
+        
         driver.execute_script("window.open('');")
         time.sleep(0.5)
-        # Switch to the new tab (last one)
-        new_handle = driver.window_handles[-1]
-        driver.switch_to.window(new_handle)
-        print(f"[spawn_agent] P11: Switched to new tab")
+        
+        # Get handles AFTER opening new tab
+        after_tabs = driver.window_handles
+        print(f"[spawn_agent] P12: Browser tabs AFTER: {len(after_tabs)}")
+        
+        # Find the NEW handle by comparing lists
+        if len(after_tabs) > len(before_tabs):
+            new_handle = [h for h in after_tabs if h not in before_tabs][0]
+            print(f"[spawn_agent] P12: New tab handle detected: {new_handle[:20]}...")
+            driver.switch_to.window(new_handle)
+            print(f"[spawn_agent] P12: ✓ Switched to new tab")
+        else:
+            print(f"[spawn_agent] P12: ERROR - New tab was NOT created! Falling back to [-1]")
+            new_handle = driver.window_handles[-1]
+            driver.switch_to.window(new_handle)
     else:
-        print(f"[spawn_agent] P11: First agent, using current tab")
+        print(f"[spawn_agent] P12: First agent, using current tab")
     
     # Navigate to new app page
     url = "https://aistudio.google.com/apps/bundled/blank?showAssistant=true&showCode=true"
@@ -1800,9 +1817,10 @@ def api_deactivate():
                 print(f"[api_deactivate] Tab close error (non-fatal): {tab_error}")
                 # Continue even if tab close fails
             
-            # Remove from memory
-            del agent_handles[agent_id]
-            print(f"[api_deactivate] ✓ Removed from memory")
+            # Remove from memory (check first - may have been cleared by InvalidSessionIdException)
+            if agent_id in agent_handles:
+                del agent_handles[agent_id]
+                print(f"[api_deactivate] ✓ Removed from memory")
         else:
             print(f"[api_deactivate] Agent not in memory (already deactivated?)")
         
