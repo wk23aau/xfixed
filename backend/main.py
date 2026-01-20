@@ -1020,19 +1020,37 @@ def send_chat_message(driver, message):
         
         response_text = None
         try:
-            # Wait up to 60s for AI to finish (check for running/thinking indicators)
+            # Wait up to 60s for AI to finish processing
+            # Check: running class, thinking indicator, button disabled, or button in "cancel" state
             for attempt in range(30):
                 time.sleep(2)
                 
-                # Check if still processing
-                running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
-                thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
+                # Check if still processing by multiple signals
+                is_processing = False
                 
-                if running_btn or thinking:
+                # 1. Check running class on send button
+                running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
+                if running_btn:
+                    is_processing = True
+                    
+                # 2. Check thinking indicator
+                thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
+                if thinking:
+                    is_processing = True
+                    
+                # 3. Check if send button is in "cancel" state (aria-label="Cancel")
+                cancel_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button[aria-label='Cancel']")
+                if cancel_btn:
+                    is_processing = True
+                    
+                # 4. Check if send button is disabled (means ready to receive new message)
+                send_btn_disabled = driver.find_elements(By.CSS_SELECTOR, "button.send-button[disabled], button.send-button.disabled")
+                
+                if is_processing:
                     logger.debug("CHAT", f"Still processing (attempt {attempt+1}/30)")
                     continue
                 
-                # Not processing anymore, try to read output.md
+                # Not processing anymore (button either enabled or disabled but not running/canceling)
                 if attempt > 2:  # Give it at least 6 seconds
                     break
             
