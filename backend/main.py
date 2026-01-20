@@ -1010,9 +1010,52 @@ def send_chat_message(driver, message):
         driver.execute_script("arguments[0].click();", send_btn)
         print("[send_chat_message] ✓ Clicked Send button")
         
-        time.sleep(2)
-        print("[send_chat_message] ✓ Message sent successfully!")
-        return True
+        # P9 Phase 4: Wait for and capture AI response
+        time.sleep(2)  # Initial wait for response to start
+        
+        # Wait for assistant response to appear (look for response bubbles)
+        response_text = None
+        try:
+            # Wait up to 30s for response (AI might take time)
+            for attempt in range(15):
+                time.sleep(2)
+                
+                # Look for response containers - AI Studio uses various selectors
+                response_selectors = [
+                    ".response-container:last-child",
+                    ".assistant-message:last-child",
+                    ".message-content.assistant:last-child",
+                    "div[data-turn-role='assistant']:last-child",
+                    ".model-response:last-child",
+                ]
+                
+                for selector in response_selectors:
+                    try:
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                        if elements:
+                            last_response = elements[-1]
+                            text = last_response.text.strip()
+                            if text and len(text) > 10:  # Non-empty response
+                                response_text = text
+                                logger.debug("CHAT", f"Response captured ({len(text)} chars)")
+                                break
+                    except:
+                        continue
+                
+                if response_text:
+                    break
+                    
+                # Check if still loading (look for loading indicators)
+                loading = driver.find_elements(By.CSS_SELECTOR, ".loading, .spinner, [aria-busy='true']")
+                if not loading:
+                    # No loading indicator and no response - might be ready
+                    break
+                    
+        except Exception as e:
+            logger.warning("CHAT", f"Response capture failed: {e}")
+        
+        print(f"[send_chat_message] ✓ Message sent successfully!")
+        return response_text if response_text else True
         
     except Exception as e:
         print(f"[send_chat_message] ERROR: {e}")
@@ -1542,11 +1585,24 @@ def api_chat():
         else:
             print(f"[api_chat] No agent specified, using current tab: {driver_ref.title}")
         
-        # Send the message
-        success = send_chat_message(driver_ref, message)
+        # Send the message and capture response
+        result = send_chat_message(driver_ref, message)
         
-        if success:
-            return jsonify({"status": "sent", "agent_id": agent_id or "current"})
+        # P9: Return response if captured
+        if result:
+            if isinstance(result, str):
+                # Response text was captured
+                return jsonify({
+                    "status": "sent",
+                    "agent_id": agent_id or "current",
+                    "response": result
+                })
+            else:
+                # Message sent but no response captured
+                return jsonify({
+                    "status": "sent",
+                    "agent_id": agent_id or "current"
+                })
         else:
             return jsonify({"error": "Failed to send message - check backend logs"}), 500
             
