@@ -1104,6 +1104,24 @@ def send_chat_message(driver, message):
                         response_text = "\n".join(lines)
                         print(f"[send_chat_message] ✓ Read {len(lines)} lines from output.md")
                         logger.debug("CHAT", f"Response captured ({len(response_text)} chars)")
+                        
+                        # P9: After first response, save URL and mark agent active
+                        # Find which agent this tab belongs to
+                        current_handle = driver.current_window_handle
+                        for aid, handle in agent_handles.items():
+                            if handle == current_handle:
+                                # Check if agent is still in "spawning" status
+                                agent_data = db_get_agent(aid)
+                                if agent_data and agent_data.get("status") == "spawning":
+                                    # First response received! Save URL and mark active
+                                    current_url = driver.current_url
+                                    db_upsert_agent(aid, status="active", drive_url=current_url)
+                                    logger.info("AGENT", f"First response received, agent now active", {
+                                        "agent_id": aid,
+                                        "url": current_url[:50]
+                                    })
+                                    print(f"[send_chat_message] ✓ Agent {aid} marked ACTIVE, URL saved")
+                                break
                 except Exception as e:
                     print(f"[send_chat_message] Error reading Monaco editor: {e}")
                      
@@ -1315,18 +1333,19 @@ def spawn_agent(driver, agent_id):
     app_name = f"AGENT: {agent_id}"
     save_app(driver, app_name)
     
-    # Get app URL
+    # Get app URL (save it for later, after first response)
     app_url = get_app_url(driver)
     
-    # P5: Save to SQLite database instead of JSON
+    # P5: Save to SQLite database - but DON'T save drive_url yet
+    # URL will be saved after first AI response confirms agent is working
     db_upsert_agent(
         agent_id=agent_id,
         name=skill["name"],
         description=skill["description"],
-        status="active",
-        drive_url=app_url
+        status="spawning"  # Not "active" until first response
+        # drive_url=app_url  # Saved after first response
     )
-    logger.info("AGENT", "Agent saved to database", {"agent_id": agent_id, "url": app_url})
+    logger.info("AGENT", "Agent saved to database (awaiting first response)", {"agent_id": agent_id, "url": app_url})
     
     # Send initialization message
     init_message = f"""First, analyze core.txt to understand the full project context and architecture.
