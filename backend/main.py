@@ -11,6 +11,7 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 try:
     import pyautogui
@@ -1020,51 +1021,39 @@ def send_chat_message(driver, message):
         driver.execute_script("arguments[0].click();", send_btn)
         print("[send_chat_message] ✓ Clicked Send button")
         
-        # P9 Phase 4: Wait for AI to finish processing
-        time.sleep(2)  # Initial wait for response to start
-        
+        # P9 Phase 4: Wait for AI to finish processing (event-driven via WebDriverWait)
         response_text = None
         try:
-            # Wait up to 60s for AI to finish processing
-            # Check: running class, thinking indicator, button disabled, or button in "cancel" state
-            for attempt in range(60):  # Up to 2 minutes (was 30)
-                time.sleep(2)
-                
-                # Check if still processing by multiple signals
-                is_processing = False
-                
-                # 1. Check running class on send button
-                running_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
-                if running_btn:
-                    is_processing = True
-                    print(f"[send_chat_message] Still running... (attempt {attempt+1})")
-                    
-                # 2. Check thinking indicator
+            print("[send_chat_message] Waiting for AI to finish (event-driven)...")
+            
+            # Custom expected condition: AI finished when no running/thinking/cancel indicators
+            def ai_finished(driver):
+                # Check if still processing
+                running = driver.find_elements(By.CSS_SELECTOR, "button.send-button.running")
                 thinking = driver.find_elements(By.CSS_SELECTOR, "ms-thinking-indicator")
-                if thinking:
-                    is_processing = True
-                    print(f"[send_chat_message] Still thinking... (attempt {attempt+1})")
-                    
-                # 3. Check if send button is in "cancel" state (aria-label="Cancel")
-                cancel_btn = driver.find_elements(By.CSS_SELECTOR, "button.send-button[aria-label='Cancel']")
-                if cancel_btn:
-                    is_processing = True
-                    print(f"[send_chat_message] Cancel button visible... (attempt {attempt+1})")
+                cancel = driver.find_elements(By.CSS_SELECTOR, "button.send-button[aria-label='Cancel']")
                 
-                # 4. Check for Checkpoint indicator (means AI finished writing)
+                if running or thinking or cancel:
+                    return False  # Still processing
+                
+                # Also check for Checkpoint indicator (AI finished writing)
                 checkpoint = driver.find_elements(By.XPATH, "//div[contains(text(), 'Checkpoint')]")
                 if checkpoint:
-                    print(f"[send_chat_message] ✓ Checkpoint detected, AI finished")
-                    break
+                    print("[send_chat_message] ✓ Checkpoint detected")
+                    return True
                     
-                if is_processing:
-                    logger.debug("CHAT", f"Still processing (attempt {attempt+1}/60)")
-                    continue
-                
-                # Not processing anymore - wait a bit more to ensure output.md is written
-                if attempt > 3:  # At least 8 seconds without processing indicators
-                    print(f"[send_chat_message] No processing indicators, proceeding...")
-                    break
+                return True  # No processing indicators
+            
+            # Wait up to 120 seconds for AI to finish (event-driven, not polling)
+            wait = WebDriverWait(driver, 120, poll_frequency=1)
+            try:
+                wait.until(ai_finished)
+                print("[send_chat_message] ✓ AI finished processing")
+            except TimeoutException:
+                print("[send_chat_message] Timeout waiting for AI, proceeding anyway...")
+            
+            # Brief pause to ensure output.md is fully written
+            time.sleep(2)
             
             # P9 Phase 5: Read response from output.md via Monaco editor
             print("[send_chat_message] Looking for output.md in file tree...")
