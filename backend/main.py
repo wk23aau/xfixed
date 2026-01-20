@@ -1378,11 +1378,12 @@ DO NOT respond in the chat. Write to output.md file ONLY.
 
 Confirm you understand by editing output.md with STATUS: READY."""
     
-    send_chat_message(driver, init_message)
-    
-    # Store window handle in memory (runtime only)
+    # Store window handle in memory BEFORE sending init message
+    # This is needed so send_chat_message can find this agent and update status
     agent_handles[agent_id] = driver.current_window_handle
     logger.debug("AGENT", "Tab handle stored", {"agent_id": agent_id, "handle": agent_handles[agent_id]})
+    
+    send_chat_message(driver, init_message)
     
     logger.info("AGENT", "Agent spawned successfully", {"agent_id": agent_id})
     return True
