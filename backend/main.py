@@ -1325,12 +1325,30 @@ def spawn_agent(driver, agent_id):
                 driver.get(saved_url)
             else:
                 # Not first agent - open new tab then navigate
-                print(f"[REACTIVATE] Additional agent - opening new tab")
+                print(f"[REACTIVATE] P12: Additional agent - opening new tab")
+                print(f"[REACTIVATE] P12: Current handles in memory: {list(agent_handles.keys())}")
+                
+                # P12 Fix: Robust new tab detection
+                before_tabs = driver.window_handles
+                print(f"[REACTIVATE] P12: Browser tabs BEFORE: {len(before_tabs)}")
+                
                 driver.execute_script("window.open('');")
                 time.sleep(0.5)
-                handles_after = driver.window_handles
-                new_handle = handles_after[-1]
-                driver.switch_to.window(new_handle)
+                
+                after_tabs = driver.window_handles
+                print(f"[REACTIVATE] P12: Browser tabs AFTER: {len(after_tabs)}")
+                
+                # Find the NEW handle by comparing lists
+                if len(after_tabs) > len(before_tabs):
+                    new_handle = [h for h in after_tabs if h not in before_tabs][0]
+                    print(f"[REACTIVATE] P12: New tab handle detected: {new_handle[:20]}...")
+                    driver.switch_to.window(new_handle)
+                    print(f"[REACTIVATE] P12: ✓ Switched to new tab")
+                else:
+                    print(f"[REACTIVATE] P12: ERROR - New tab was NOT created!")
+                    new_handle = driver.window_handles[-1]
+                    driver.switch_to.window(new_handle)
+                
                 driver.get(saved_url)
             print(f"[REACTIVATE] driver.get() called")
             
